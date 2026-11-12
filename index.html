@@ -194,12 +194,17 @@ function pcTable(s) {
   return el("section", { class: "block", style: "overflow-x:auto" }, el("h2", {}, "Mga PC"),
     el("table", {}, el("thead", {}, el("tr", {}, el("th", {}, "PC"), el("th", {}, "Status"), el("th", {}, "Naglalaro"), el("th", {}, "Natitirang oras"))), body));
 }
+function chips(items) {
+  return el("div", { style: "display:flex;flex-wrap:wrap;gap:10px" }, items.map(([v, l]) =>
+    el("div", { class: "block", style: "padding:8px 14px" }, el("b", {}, v), " ", l)));
+}
 function oneShop(s) {
   const t = s.today;
   return el("div", { style: "display:grid;gap:18px" },
     el("div", {}, liveness(s)),
     el("div", { class: "cards" }, card("c-amber", peso(t.consumed), "Kinita ngayon (nagamit na oras)"), card("c-violet", peso(t.income), "Benta / load ngayon"),
       card("c-blue", `${online(s)} / ${s.pcs.length}`, "Online na PC"), card("c-teal", t.accounts, "Customer accounts"), card("c-red", t.pending, "Naghihintay ng approval")),
+    chips([[peso(t.cash || 0), "Cash"], [peso(t.gcash || 0), "GCash"], [t.walkins || 0, "Walk-in"]]),
     el("div", { class: "grid2" }, pcTable(s), chart(s.week)));
 }
 function allShops() {
@@ -211,6 +216,7 @@ function allShops() {
   return el("div", { style: "display:grid;gap:18px" },
     el("div", { class: "cards" }, card("c-amber", peso(sum((s) => s.today.consumed)), "Kabuuang kinita ngayon"), card("c-violet", peso(sum((s) => s.today.income)), "Kabuuang benta / load ngayon"),
       card("c-blue", `${sum(online)} / ${sum((s) => s.pcs.length)}`, "Online na PC"), card("c-teal", sum((s) => s.today.accounts), "Customer accounts"), card("c-red", sum((s) => s.today.pending), "Naghihintay ng approval")),
+    chips([[peso(sum((s) => s.today.cash || 0)), "Cash"], [peso(sum((s) => s.today.gcash || 0)), "GCash"], [sum((s) => s.today.walkins || 0), "Walk-in"]]),
     el("section", { class: "block", style: "overflow-x:auto" }, el("h2", {}, "Bawat branch"),
       el("table", {}, el("thead", {}, el("tr", {}, el("th", {}, "Branch"), el("th", {}, "Kinita"), el("th", {}, "Benta"), el("th", {}, "Online na PC"), el("th", {}, "Kalagayan"))), body)),
     chart(Object.values(week).sort((a, b) => a.date.localeCompare(b.date))));
