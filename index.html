@@ -244,6 +244,40 @@ function chips(items) {
   return el("div", { style: "display:flex;flex-wrap:wrap;gap:10px" }, items.map(([v, l]) =>
     el("div", { class: "block", style: "padding:8px 14px" }, el("b", {}, v), " ", l)));
 }
+function timeText(iso) { return iso ? new Date(iso).toLocaleTimeString("fil-PH", { hour: "numeric", minute: "2-digit" }) : "—"; }
+// The requests waiting for approval. Approve and Reject send ONE tiny note to the Hub (Realtime Database); the Hub
+// applies it with its own record of the request, so nothing about the amount can be changed from here.
+async function decideRequest(shopId, req, d, button, row) {
+  const what = d === "approve" ? (req.k === "cash" ? "Natanggap na ang cash?" : "Tiyaking pumasok ang bayad sa GCash app mo.") : "";
+  if (!confirm(`${d === "approve" ? "I-approve" : "I-reject"} ang ₱${req.a} ni ${req.u}? ${what}`)) return;
+  button.disabled = true;
+  try {
+    const r = await fetch(`${RTDB}/decisions/${uid}/${shopId}/${encodeURIComponent(req.id)}.json?auth=${encodeURIComponent(idToken)}`,
+      { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ d, at: { ".sv": "timestamp" } }) });
+    if (!r.ok) throw new Error("denied");
+    row.querySelector(".act").textContent = "Naipadala sa Hub. Hintayin ang kumpirmasyon…";
+  } catch (e) { button.disabled = false; alert("Hindi naipadala. Subukan ulit."); }
+}
+function requestsBlock(s) {
+  const list = s.pendingList || [], body = el("tbody");
+  for (const q of list) {
+    const act = el("td", { class: "act" });
+    const row = el("tr", {}, el("td", {}, timeText(q.c)), el("td", {}, el("b", {}, q.u)), el("td", {}, `₱${q.a} (${mins(q.m)})`),
+      el("td", {}, q.k === "cash" ? "Cash: ibibigay sa bantay" : `GCash ref ${q.r}`), act);
+    if (s.remote) {
+      const ok = el("button", { type: "button", style: "min-height:44px;padding:0 14px;border-radius:8px;border:0;background:#1f9d6a;color:#fff;font-weight:600;cursor:pointer;margin-right:6px" }, q.k === "cash" ? "Natanggap ang cash" : "Approve");
+      const no = el("button", { type: "button", style: "min-height:44px;padding:0 14px;border-radius:8px;border:1px solid #c0392b;background:#fff;color:#c0392b;cursor:pointer" }, "Reject");
+      ok.onclick = () => decideRequest(s.shopId, q, "approve", ok, row); no.onclick = () => decideRequest(s.shopId, q, "reject", no, row);
+      act.append(ok, no);
+    }
+    body.append(row);
+  }
+  if (!list.length) body.append(el("tr", {}, el("td", { colspan: 5, class: "empty" }, "Walang naghihintay.")));
+  return el("section", { class: "block", style: "overflow-x:auto" }, el("h2", {}, "Mga request na naghihintay"),
+    el("p", { class: "empty", style: "margin:0 0 8px" }, s.remote ? "Tingnan muna sa GCash app mo kung pumasok ang bayad at tugma ang reference number bago i-approve."
+      : "Naka-off ang pag-approve mula sa phone. I-on sa admin page ng shop (Settings, Cloud)."),
+    el("table", {}, el("thead", {}, el("tr", {}, el("th", {}, "Oras"), el("th", {}, "Username"), el("th", {}, "Halaga"), el("th", {}, "Bayad"), el("th", {}, ""))), body));
+}
 function dayText(iso) { return iso ? new Date(iso).toLocaleDateString("fil-PH", { month: "short", day: "numeric" }) : "—"; }
 function accountsBlock(s) {
   const body = el("tbody");
@@ -290,6 +324,7 @@ function oneShop(s) {
       card("c-blue", `${online(s)} / ${s.pcs.length}`, "Online na PC"), card("c-teal", t.accounts, "Customer accounts"), card("c-red", t.pending, "Naghihintay ng approval")),
     chips([[peso(t.cash || 0), "Cash"], [peso(t.gcash || 0), "GCash"], [t.walkins || 0, "Walk-in"]]),
     el("div", { class: "grid2" }, pcTable(s), chart(s.week)),
+    requestsBlock(s),
     accountsBlock(s));
 }
 function allShops() {
