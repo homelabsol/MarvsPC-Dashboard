@@ -88,10 +88,12 @@
 <script>
 // Public project key (not a secret). The data is protected by the Firestore rules, not by this key.
 const API_KEY = "AIzaSyBVsogVXAX6BX8wwfNoosjL0BHci4h2Mgk", PROJECT = "cashlesspisonet";
+let RTDB = "https://cashlesspisonet-default-rtdb.asia-southeast1.firebasedatabase.app", ALIVE_MS = 100000, alive = {}, seen = {};
 let AUTH = "https://identitytoolkit.googleapis.com/v1", TOKEN = "https://securetoken.googleapis.com/v1/token", STORE = "https://firestore.googleapis.com/v1";
 { // tests only, and only on this computer: point the page at a pretend Firebase
   const t = new URLSearchParams(location.search).get("test_api");
-  if (t && ["localhost", "127.0.0.1"].includes(location.hostname)) { AUTH = t + "/idt/v1"; TOKEN = t + "/tok/v1/token"; STORE = t + "/fs/v1"; }
+  if (t && ["localhost", "127.0.0.1"].includes(location.hostname)) { AUTH = t + "/idt/v1"; TOKEN = t + "/tok/v1/token"; STORE = t + "/fs/v1"; RTDB = t + "/rtdb";
+    const ms = parseInt(new URLSearchParams(location.search).get("test_alive_ms"), 10); if (ms) ALIVE_MS = ms; }
 }
 const $ = (s) => document.querySelector(s);
 const RT = "marvspc_rt";
@@ -164,6 +166,7 @@ async function load() {
   if (!r.ok) throw new Error("Hindi makuha ang data.");
   shops = d.filter((x) => x.document).map((x) => fromFs({ mapValue: { fields: x.document.fields } }));
   shops.sort((a, b) => a.shopName.localeCompare(b.shopName));
+  await loadAlive();
   fetchedAt = new Date();
   draw();
 }
@@ -171,7 +174,38 @@ async function load() {
 // ---- drawing ----
 const STATUS = { vacant: "Bakante", in_use: "Naglalaro", parked: "Naka-park", maintenance: "Maintenance", offline: "Offline" };
 function pcKey(pc) { return pc.status === "in_use" && pc.parked ? "parked" : pc.status; }
+// The Hub sends a tiny "I am alive" signal every 30 seconds (Realtime Database, free and not counted like Firestore).
+// A Hub is gone when the signal is older than ~100 seconds. The clocks of the Hub and of this device may disagree:
+// when they agree we use the age of the signal; once we have SEEN it move, we trust our own clock only.
+async function loadAlive() {
+  try {
+    const r = await fetch(`${RTDB}/alive/${uid}.json?auth=${encodeURIComponent(idToken)}`);
+    if (!r.ok) { alive = {}; return; }
+    alive = (await r.json()) || {};
+    const now = Date.now();
+    for (const [id, a] of Object.entries(alive)) {
+      const s = seen[id];
+      if (!s) seen[id] = { at: a.at, local: now, changed: false };
+      else if (a.at > s.at) seen[id] = { at: a.at, local: now, changed: true };      // it moved forward (a Hub never goes back)
+    }
+  } catch (e) { alive = {}; }
+}
+function liveInfo(s) {
+  const a = alive[s.shopId];
+  if (!a || typeof a.at !== "number") return null;                              // no signal (yet): use the Firestore update time
+  const now = Date.now(), age = now - a.at, sn = seen[s.shopId] || { local: now, changed: false };
+  if (sn.changed) return { ok: now - sn.local < ALIVE_MS, at: a.at };           // we saw it move: our own clock
+  if (age >= -60000 && age < 300000) return { ok: age < ALIVE_MS, at: a.at };   // the clocks agree
+  if (age >= 300000) return { ok: false, at: a.at };                            // old: gone (until we see it move)
+  return { ok: now - sn.local < ALIVE_MS, at: a.at };                           // this device's clock is behind
+}
 function liveness(s) {
+  const info = liveInfo(s);
+  if (info) {
+    const t = new Date(info.at).toLocaleTimeString("fil-PH", { hour: "numeric", minute: "2-digit", second: "2-digit" });
+    return info.ok ? el("span", { class: "live ok" }, el("i"), `Buhay · huling hudyat ${t}`)
+                   : el("span", { class: "live stale" }, el("i"), `Hindi nakakonekta ang Hub · huling hudyat ${t}`);
+  }
   const ageMin = (Date.now() - Date.parse(s.updatedAt)) / 60000;
   const at = new Date(s.updatedAt).toLocaleTimeString("fil-PH", { hour: "numeric", minute: "2-digit" });
   return ageMin > 15 ? el("span", { class: "live stale" }, el("i"), `Hindi nakakonekta ang Hub · huling update ${at}`)
