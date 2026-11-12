@@ -237,10 +237,11 @@ function draw() {
   const tabs = $("#tabs"); tabs.replaceChildren();
   const mk = (id, text) => { const b = el("button", { type: "button", "aria-pressed": String(current === id) }, text); b.onclick = () => { current = id; draw(); }; tabs.append(b); };
   if (!shops.length) { $("#view").replaceChildren(el("p", { class: "block empty" }, "Wala pang shop na naka-connect. Sa admin page ng shop, Settings, i-connect ang Cloud.")); return; }
-  if (shops.length > 1) mk("all", "Lahat ng branch");
+  // Tabs are only for an owner with more than one branch. With one branch there is nothing to choose: no tabs at all.
+  tabs.classList.toggle("hidden", shops.length < 2);
   if (current !== "all" && !shops.find((s) => s.shopId === current)) current = shops.length > 1 ? "all" : shops[0].shopId;
   if (shops.length === 1) current = shops[0].shopId;
-  for (const s of shops) mk(s.shopId, s.shopName);
+  if (shops.length > 1) { mk("all", "Lahat ng branch"); for (const s of shops) mk(s.shopId, s.shopName); }
   $("#view").replaceChildren(current === "all" ? allShops() : oneShop(shops.find((s) => s.shopId === current)));
   $("#foot").textContent = "Pagtingin lang ito. Hindi magbabago ang shop mula rito. Kusang nag-a-update habang tinitingnan mo ito"
     + (fetchedAt ? ` (huling kuha: ${fetchedAt.toLocaleTimeString("fil-PH", { hour: "numeric", minute: "2-digit", second: "2-digit" })}).` : ".");
