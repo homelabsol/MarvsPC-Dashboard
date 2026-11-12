@@ -210,6 +210,44 @@ function chips(items) {
   return el("div", { style: "display:flex;flex-wrap:wrap;gap:10px" }, items.map(([v, l]) =>
     el("div", { class: "block", style: "padding:8px 14px" }, el("b", {}, v), " ", l)));
 }
+function dayText(iso) { return iso ? new Date(iso).toLocaleDateString("fil-PH", { month: "short", day: "numeric" }) : "—"; }
+function accountsBlock(s) {
+  const body = el("tbody");
+  const fill = (rows, searching) => {
+    body.replaceChildren();
+    for (const a of rows) body.append(el("tr", {}, el("td", {}, el("b", {}, a.u)), el("td", {}, a.n || "—"), el("td", {}, dayText(a.c)),
+      el("td", {}, a.m === undefined ? (a.weak ? "mahinang password" : "—") : mins(a.m))));
+    if (!rows.length) body.append(el("tr", {}, el("td", { colspan: 4, class: "empty" }, searching ? "Walang nakita." : "Wala pang account.")));
+  };
+  fill(s.recent || [], false);
+  const msg = el("p", { class: "empty", style: "margin:8px 0 0" });
+  const q = el("input", { type: "search", placeholder: "Hanapin ang username", maxlength: "20", "aria-label": "Hanapin ang username", style: "max-width:240px" });
+  const go = el("button", { type: "button", style: "min-height:44px;padding:0 16px;border-radius:8px;border:1px solid #a9b8d0;background:#fff;cursor:pointer" }, "Hanapin");
+  const run = async () => {
+    const text = q.value.trim().toLowerCase();
+    if (!text) { fill(s.recent || [], false); msg.textContent = ""; return; }
+    msg.textContent = "Sandali…";
+    try { fill(await searchAccounts(s.shopId, text), true); msg.textContent = "Mga resulta ng paghahanap (hanggang 20)."; }
+    catch (e) { msg.textContent = "Hindi makuha ang resulta."; }
+  };
+  go.onclick = run; q.onkeydown = (ev) => { if (ev.key === "Enter") run(); };
+  return el("section", { class: "block", style: "overflow-x:auto" }, el("h2", {}, "Mga account"),
+    el("div", { style: "display:flex;gap:8px;margin:0 0 10px;flex-wrap:wrap" }, q, go),
+    el("table", {}, el("thead", {}, el("tr", {}, el("th", {}, "Username"), el("th", {}, "Pangalan"), el("th", {}, "Ginawa"), el("th", {}, "Natitirang oras"))), body), msg,
+    el("p", { class: "empty", style: "margin:8px 0 0" }, "Ang huling 30 na ginawa. Ang paghahanap ay kumukuha ng hanggang 20 mula sa cloud."));
+}
+// Find accounts by the start of the username (at most 20 reads, only when pressed).
+async function searchAccounts(shopId, prefix) {
+  const parent = `projects/${PROJECT}/databases/(default)/documents/data/${uid}/shops/${shopId}`;
+  const q = { structuredQuery: { from: [{ collectionId: "players" }], limit: 20,
+    where: { compositeFilter: { op: "AND", filters: [
+      { fieldFilter: { field: { fieldPath: "__name__" }, op: "GREATER_THAN_OR_EQUAL", value: { referenceValue: `${parent}/players/${prefix}` } } },
+      { fieldFilter: { field: { fieldPath: "__name__" }, op: "LESS_THAN", value: { referenceValue: `${parent}/players/${prefix}\uf8ff` } } }] } },
+    orderBy: [{ field: { fieldPath: "__name__" }, direction: "ASCENDING" }] } };
+  const [r, d] = await post(`${STORE}/${parent}:runQuery`, JSON.stringify(q), { "Content-Type": "application/json", Authorization: "Bearer " + idToken });
+  if (!r.ok) throw new Error("search");
+  return d.filter((x) => x.document).map((x) => { const f = fromFs({ mapValue: { fields: x.document.fields } }); return { u: f.username, n: f.fullName, c: f.createdAt, weak: f.weak }; });
+}
 function oneShop(s) {
   const t = s.today;
   return el("div", { style: "display:grid;gap:18px" },
@@ -217,7 +255,8 @@ function oneShop(s) {
     el("div", { class: "cards" }, card("c-amber", peso(t.consumed), "Kinita ngayon (nagamit na oras)"), card("c-violet", peso(t.income), "Benta / load ngayon"),
       card("c-blue", `${online(s)} / ${s.pcs.length}`, "Online na PC"), card("c-teal", t.accounts, "Customer accounts"), card("c-red", t.pending, "Naghihintay ng approval")),
     chips([[peso(t.cash || 0), "Cash"], [peso(t.gcash || 0), "GCash"], [t.walkins || 0, "Walk-in"]]),
-    el("div", { class: "grid2" }, pcTable(s), chart(s.week)));
+    el("div", { class: "grid2" }, pcTable(s), chart(s.week)),
+    accountsBlock(s));
 }
 function allShops() {
   const body = el("tbody");
