@@ -95,7 +95,18 @@ let AUTH = "https://identitytoolkit.googleapis.com/v1", TOKEN = "https://securet
 }
 const $ = (s) => document.querySelector(s);
 const RT = "marvspc_rt";
-let idToken = null, uid = null, shops = [], current = "all", timer = null, tick = null;
+let idToken = null, uid = null, shops = [], current = "all", timer = null, tick = null, fetchedAt = null, lastActive = Date.now();
+// Updates by itself: every 15 seconds while someone is looking at the page, every 2 minutes when nobody
+// touched it for 5 minutes, and not at all while the tab is hidden (every read counts against the free quota).
+for (const ev of ["mousemove", "keydown", "click", "touchstart", "scroll"]) addEventListener(ev, () => { lastActive = Date.now(); }, { passive: true });
+const pollDelay = () => (Date.now() - lastActive < 300000 ? 15000 : 120000);
+async function poll() {
+  clearTimeout(timer);
+  if (!idToken) return;
+  if (!document.hidden) await load().catch(() => {});
+  timer = setTimeout(poll, document.hidden ? 15000 : pollDelay());
+}
+document.addEventListener("visibilitychange", () => { if (!document.hidden && idToken) poll(); });
 
 function el(tag, attrs, ...kids) {
   const e = document.createElement(tag);
@@ -139,7 +150,7 @@ async function resume() {
   idToken = d.id_token; uid = d.user_id; localStorage.setItem(RT, d.refresh_token || rt);
   return true;
 }
-function leave() { localStorage.removeItem(RT); idToken = null; clearInterval(timer); clearInterval(tick); $("#app").classList.add("hidden"); $("#loginBox").classList.remove("hidden"); }
+function leave() { localStorage.removeItem(RT); idToken = null; clearTimeout(timer); clearInterval(tick); $("#app").classList.add("hidden"); $("#loginBox").classList.remove("hidden"); }
 
 // ---- load the owner's shops (the filter on ownerUid is what the security rules require) ----
 async function load() {
@@ -153,6 +164,7 @@ async function load() {
   if (!r.ok) throw new Error("Hindi makuha ang data.");
   shops = d.filter((x) => x.document).map((x) => fromFs({ mapValue: { fields: x.document.fields } }));
   shops.sort((a, b) => a.shopName.localeCompare(b.shopName));
+  fetchedAt = new Date();
   draw();
 }
 
@@ -230,7 +242,8 @@ function draw() {
   if (shops.length === 1) current = shops[0].shopId;
   for (const s of shops) mk(s.shopId, s.shopName);
   $("#view").replaceChildren(current === "all" ? allShops() : oneShop(shops.find((s) => s.shopId === current)));
-  $("#foot").textContent = "Pagtingin lang ito. Hindi magbabago ang shop mula rito. Nag-a-update kada minuto.";
+  $("#foot").textContent = "Pagtingin lang ito. Hindi magbabago ang shop mula rito. Kusang nag-a-update habang tinitingnan mo ito"
+    + (fetchedAt ? ` (huling kuha: ${fetchedAt.toLocaleTimeString("fil-PH", { hour: "numeric", minute: "2-digit", second: "2-digit" })}).` : ".");
 }
 function tickClocks() {
   document.querySelectorAll("[data-ends]").forEach((td) => { const e = Number(td.dataset.ends); if (e) td.textContent = clock(e - Date.now() / 1000); });
@@ -240,8 +253,8 @@ function tickClocks() {
 async function open() {
   $("#loginBox").classList.add("hidden"); $("#app").classList.remove("hidden");
   await load().catch((e) => $("#view").replaceChildren(el("p", { class: "block" }, e.message)));
-  clearInterval(timer); clearInterval(tick);
-  timer = setInterval(() => load().catch(() => {}), 45000); tick = setInterval(tickClocks, 1000);
+  clearTimeout(timer); clearInterval(tick);
+  timer = setTimeout(poll, pollDelay()); tick = setInterval(tickClocks, 1000);
 }
 $("#loginForm").addEventListener("submit", async (ev) => {
   ev.preventDefault();
