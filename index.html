@@ -5,76 +5,108 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>MarvsPC-Piso · Dashboard ng owner</title>
 <style>
-  :root { --paper:#eef2f8; --card:#fff; --ink:#10233f; --muted:#4b5d78; --line:#d5deeb; --navy:#10233f; --sun:#ffc93c; }
-  * { box-sizing: border-box; }
-  body { margin:0; background:var(--paper); color:var(--ink); font:15px/1.5 "Segoe UI", system-ui, sans-serif; }
+  /* One design: a calm light background, white cards with a thin border, a navy side menu and ONE accent (gold).
+     Every tile has the same size and the same colour; colour is used only to say something (ok, warning, problem). */
+  :root { --bg:#f3f5f9; --surface:#fff; --ink:#0f1f3a; --muted:#5b6b84; --line:#e2e8f1; --navy:#10233f; --navy2:#1b3157; --gold:#f5b82e; --tint:#eaf0f8;
+          --ok:#14532d; --okbg:#dcfce7; --warn:#78350f; --warnbg:#fef3c7; --bad:#7f1d1d; --badbg:#fee2e2; --info:#1e3a8a; --infobg:#dbeafe;
+          --shadow:0 1px 2px rgba(16,35,63,.05), 0 6px 18px rgba(16,35,63,.05); }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font:14.5px/1.5 Inter, "Segoe UI", system-ui, -apple-system, sans-serif; -webkit-font-smoothing:antialiased; }
   .hidden { display:none !important; }
   button, input { font:inherit; color:inherit; }
-  input { padding:10px 12px; border:1px solid #a9b8d0; border-radius:8px; background:#fff; min-height:44px; width:100%; }
-  button { padding:9px 14px; border-radius:8px; border:1px solid #a9b8d0; background:#fff; cursor:pointer; min-height:44px; }
-  button.primary { background:var(--navy); color:#fff; border-color:var(--navy); font-weight:600; }
-  button:focus-visible, input:focus-visible { outline:3px solid var(--sun); outline-offset:1px; }
-  .top { background:var(--navy); color:#f2f5fa; padding:12px 20px; display:flex; flex-wrap:wrap; align-items:center; gap:12px; }
-  .logo { width:38px; height:38px; border-radius:10px; background:var(--sun); color:var(--navy); display:grid; place-items:center; font-weight:700; }
-  .top b { font-size:17px; }
-  .top .who { margin-left:auto; display:flex; align-items:center; gap:10px; font-size:13px; color:#c9d6ea; }
-  .top button { background:transparent; color:#f2f5fa; border-color:#3a5886; min-height:40px; }
-  main { max-width:1200px; margin:0 auto; padding:20px; display:grid; gap:18px; }
-  .login { max-width:380px; margin:12vh auto; background:var(--card); border:1px solid var(--line); border-radius:16px; padding:26px; display:grid; gap:12px; }
-  .login h1 { margin:0; font-size:24px; }
-  .login label { display:grid; gap:4px; font-size:13px; color:var(--muted); }
+  input { padding:9px 12px; border:1px solid #c9d4e4; border-radius:10px; background:#fff; min-height:42px; width:100%; }
+  button { padding:0 16px; border-radius:10px; border:1px solid var(--line); background:#fff; cursor:pointer; min-height:42px; font-weight:600; transition:background .15s, border-color .15s; }
+  button:hover { background:#f6f8fc; border-color:#cdd8e8; }
+  button.primary { background:var(--navy); color:#fff; border-color:var(--navy); }
+  button.primary:hover { background:var(--navy2); }
+  button:focus-visible, input:focus-visible, a:focus-visible { outline:3px solid var(--gold); outline-offset:1px; }
+  button:disabled { opacity:.55; cursor:default; }
+  .btn-ok { background:#15803d; border-color:#15803d; color:#fff; }
+  .btn-ok:hover { background:#166f37; border-color:#166f37; }
+  .btn-no { color:#b91c1c; border-color:#e7b4b4; background:#fff; }
+  .btn-no:hover { background:#fff5f5; }
+
+  .top { background:var(--navy); color:#f2f5fa; height:60px; padding:0 22px; display:flex; align-items:center; gap:12px; border-bottom:1px solid #20395f; }
+  .logo { width:34px; height:34px; border-radius:9px; background:var(--gold); color:var(--navy); display:grid; place-items:center; font-weight:800; font-size:14px; }
+  .top b { font-size:16px; letter-spacing:.01em; }
+  .top .who { margin-left:auto; display:flex; align-items:center; gap:10px; font-size:13px; color:#b9c7de; }
+  .top button { background:transparent; color:#e8eefb; border-color:#3a5886; min-height:36px; padding:0 14px; }
+  .top button:hover { background:#1b3157; }
+
+  .shell { display:grid; grid-template-columns:232px minmax(0, 1fr); min-height:calc(100vh - 60px); }
+  .side { background:var(--navy); padding:18px 12px; display:flex; flex-direction:column; gap:4px; align-content:start; }
+  .side a { display:flex; align-items:center; gap:12px; padding:0 14px; border-radius:10px; color:#c5d2e8; text-decoration:none; font-weight:600; min-height:42px; }
+  .side a:hover { background:rgba(255,255,255,.07); color:#fff; }
+  .side a[aria-current="page"] { background:var(--gold); color:var(--navy); }
+  .side a svg { flex:0 0 20px; }
+  .badge { margin-left:auto; background:#dc2626; color:#fff; border-radius:99px; min-width:22px; padding:1px 7px; font-size:12px; text-align:center; }
+  main { padding:26px 30px 48px; max-width:1360px; width:100%; display:grid; gap:16px; align-content:start; }
+  .page { display:grid; gap:16px; }
+
+  /* the branch tabs and the date ranges: one calm segmented control */
+  .tabs, .range { display:inline-flex; flex-wrap:wrap; gap:4px; padding:4px; background:#e6ecf5; border-radius:12px; width:fit-content; max-width:100%; }
+  .tabs button, .range button { min-height:34px; padding:0 16px; border:0; background:transparent; border-radius:9px; color:var(--muted); }
+  .tabs button:hover, .range button:hover { background:rgba(255,255,255,.55); }
+  .tabs button[aria-pressed="true"], .range button[aria-pressed="true"] { background:#fff; color:var(--ink); box-shadow:0 1px 3px rgba(16,35,63,.16); }
+
+  .login { max-width:400px; margin:12vh auto; background:var(--surface); border:1px solid var(--line); border-radius:16px; padding:28px; display:grid; gap:12px; box-shadow:var(--shadow); }
+  .login h1 { margin:0; font-size:22px; }
+  .login label { display:grid; gap:5px; font-size:13px; color:var(--muted); }
   .msg { min-height:21px; font-size:14px; color:#b91c1c; margin:0; }
-  .tabs { display:flex; flex-wrap:wrap; gap:8px; }
-  .tabs button[aria-pressed="true"] { background:var(--navy); color:#fff; border-color:var(--navy); }
-  .live { font-size:13px; border-radius:99px; padding:4px 12px; display:inline-flex; align-items:center; gap:8px; font-weight:600; }
+
+  .live { font-size:12.5px; border-radius:99px; padding:4px 12px; display:inline-flex; align-items:center; gap:8px; font-weight:600; }
   .live i { width:8px; height:8px; border-radius:50%; display:inline-block; }
-  .ok { background:#dcfce7; color:#14532d; } .ok i { background:#15803d; }
-  .stale { background:#fef3c7; color:#78350f; } .stale i { background:#b45309; }
-  .cards { display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:14px; }
-  .card { border-radius:16px; padding:16px 18px; color:#fff; }
-  .card b { display:block; font-size:28px; line-height:1.15; }
-  .card span { font-size:13px; }
-  .c-amber { background:#b45309; } .c-violet { background:#6d28d9; } .c-blue { background:#1d4ed8; } .c-teal { background:#0f766e; } .c-red { background:#b91c1c; }
-  .block { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:16px 18px; min-width:0; }
-  .block h2 { margin:0 0 10px; font-size:17px; }
-  .grid2 { display:grid; grid-template-columns:minmax(0, 3fr) minmax(0, 2fr); gap:18px; align-items:start; }
+  .ok { background:var(--okbg); color:var(--ok); } .ok i { background:#16a34a; }
+  .stale { background:var(--warnbg); color:var(--warn); } .stale i { background:#d97706; }
+
+  /* the tiles: all the same size, all the same colour */
+  .kpis { display:grid; grid-template-columns:repeat(4, minmax(0, 1fr)); gap:14px; }
+  .kpis.six { grid-template-columns:repeat(3, minmax(0, 1fr)); }
+  .kpi { background:var(--surface); border:1px solid var(--line); border-radius:14px; padding:16px 18px; min-height:96px; display:flex; align-items:flex-start; justify-content:space-between; gap:12px; box-shadow:var(--shadow); }
+  .kpi .kl { display:block; color:var(--muted); font-size:13px; line-height:1.3; }
+  .kpi b { display:block; font-size:26px; line-height:1.2; margin-top:8px; letter-spacing:-.01em; font-variant-numeric:tabular-nums; }
+  .kpi .ki { flex:0 0 38px; height:38px; border-radius:10px; background:var(--tint); color:var(--navy2); display:grid; place-items:center; }
+
+  .block { background:var(--surface); border:1px solid var(--line); border-radius:14px; padding:18px 20px; min-width:0; box-shadow:var(--shadow); }
+  .block h2 { margin:0 0 12px; font-size:16px; letter-spacing:.005em; }
+  .grid2 { display:grid; grid-template-columns:minmax(0, 3fr) minmax(0, 2fr); gap:16px; align-items:stretch; }
   table { width:100%; border-collapse:collapse; }
-  th, td { text-align:left; padding:8px 6px; border-bottom:1px solid #e3e9f3; white-space:nowrap; }
-  th { font-size:12px; color:var(--muted); text-transform:uppercase; letter-spacing:.04em; }
-  .pill { display:inline-flex; align-items:center; gap:7px; border-radius:99px; padding:2px 10px; font-weight:600; font-size:13px; }
+  th, td { text-align:left; padding:11px 10px; border-bottom:1px solid var(--line); white-space:nowrap; }
+  tbody tr:last-child td { border-bottom:0; }
+  tbody tr:hover td { background:#fafbfd; }
+  th { font-size:11.5px; color:var(--muted); text-transform:uppercase; letter-spacing:.06em; font-weight:700; }
+  td { font-variant-numeric:tabular-nums; }
+  .num { text-align:right; } td.num, th.num { text-align:right; }
+  .pill { display:inline-flex; align-items:center; gap:7px; border-radius:99px; padding:2px 11px; font-weight:600; font-size:12.5px; }
   .pill i { width:8px; height:8px; border-radius:50%; display:inline-block; }
-  .p-vacant { background:#dcfce7; color:#14532d; } .p-vacant i { background:#15803d; }
-  .p-in_use { background:#dbeafe; color:#1e3a8a; } .p-in_use i { background:#1d4ed8; }
-  .p-parked { background:#ede9fe; color:#4c1d95; } .p-parked i { background:#6d28d9; }
-  .p-maintenance { background:#fef3c7; color:#78350f; } .p-maintenance i { background:#b45309; }
-  .p-offline { background:#e2e8f0; color:#334155; } .p-offline i { background:#64748b; }
-  .chart { display:flex; align-items:flex-end; gap:10px; height:170px; border-bottom:1px solid var(--line); padding-top:8px; }
+  .p-vacant { background:var(--okbg); color:var(--ok); } .p-vacant i { background:#16a34a; }
+  .p-in_use { background:var(--infobg); color:var(--info); } .p-in_use i { background:#2563eb; }
+  .p-parked { background:#ede9fe; color:#4c1d95; } .p-parked i { background:#7c3aed; }
+  .p-maintenance { background:var(--warnbg); color:var(--warn); } .p-maintenance i { background:#d97706; }
+  .p-offline { background:#e8edf4; color:#334155; } .p-offline i { background:#64748b; }
+  .chart { display:flex; align-items:flex-end; gap:10px; height:180px; border-bottom:1px solid var(--line); padding-top:8px; }
   .chart .col { flex:1 1 0; height:100%; display:flex; align-items:flex-end; justify-content:center; gap:4px; }
   .chart .col i { width:16px; border-radius:4px 4px 0 0; display:block; min-height:2px; }
-  .lbl { display:flex; gap:10px; padding-top:6px; font-size:12px; color:#33445f; }
+  .lbl { display:flex; gap:10px; padding-top:8px; font-size:12px; color:var(--muted); }
   .lbl div { flex:1 1 0; text-align:center; } .lbl b { display:block; color:var(--ink); }
-  .legend { display:flex; flex-wrap:wrap; gap:14px; font-size:13px; color:#33445f; margin-bottom:6px; }
-  .legend i { display:inline-block; width:12px; height:12px; border-radius:3px; margin-right:6px; vertical-align:-1px; }
+  .legend { display:flex; flex-wrap:wrap; gap:16px; font-size:12.5px; color:var(--muted); margin-bottom:8px; }
+  .legend i { display:inline-block; width:10px; height:10px; border-radius:3px; margin-right:6px; vertical-align:0; }
   .empty { color:var(--muted); }
-  .foot { font-size:12.5px; color:var(--muted); }
-  .shell { display:grid; grid-template-columns:220px minmax(0, 1fr); min-height:calc(100vh - 64px); }
-  .side { background:var(--navy); padding:14px 10px; display:flex; flex-direction:column; gap:6px; }
-  .side a { display:flex; align-items:center; gap:12px; padding:11px 14px; border-radius:12px; color:#dbe5f5; text-decoration:none; font-weight:600; min-height:44px; }
-  .side a:hover { background:#1b335a; }
-  .side a[aria-current="page"] { background:var(--sun); color:var(--navy); }
-  .side a svg { flex:0 0 20px; }
-  .badge { margin-left:auto; background:#b91c1c; color:#fff; border-radius:99px; min-width:22px; padding:1px 7px; font-size:12px; text-align:center; }
-  .range { display:flex; flex-wrap:wrap; gap:8px; }
-  .range button[aria-pressed="true"] { background:var(--navy); color:#fff; border-color:var(--navy); }
-  .num { text-align:right; }
-  td.num, th.num { text-align:right; }
+  .foot { font-size:12.5px; color:var(--muted); margin:6px 0 0; }
+  .toolbar { display:flex; gap:8px; flex-wrap:wrap; margin:0 0 12px; }
+  .toolbar input { max-width:260px; }
+  .notice { margin:0 0 10px; padding:10px 14px; border-radius:10px; background:var(--okbg); color:var(--ok); font-weight:600; }
+
+  @media (max-width: 1100px) { .kpis, .kpis.six { grid-template-columns:repeat(2, minmax(0, 1fr)); } }
+  @media (max-width: 900px) { .grid2 { grid-template-columns:minmax(0, 1fr); } }
   @media (max-width: 800px) {
-    .grid2 { grid-template-columns:minmax(0, 1fr); } main { padding:14px 14px 90px; }
-    .cards { grid-template-columns:repeat(2, minmax(0, 1fr)); gap:10px; } .card { padding:12px 14px; } .card b { font-size:22px; }
+    main { padding:16px 14px 92px; }
+    .top { padding:0 14px; } .top .who span { display:none; }
     .shell { display:block; }
-    .side { position:fixed; left:0; right:0; bottom:0; z-index:5; flex-direction:row; padding:6px; gap:2px; overflow-x:auto; border-top:1px solid #3a5886; }
-    .side a { flex:1 0 76px; flex-direction:column; justify-content:center; gap:3px; font-size:11px; padding:6px 4px; border-radius:10px; text-align:center; position:relative; }
+    .side { position:fixed; left:0; right:0; bottom:0; z-index:5; flex-direction:row; padding:6px; gap:2px; overflow-x:auto; border-top:1px solid #2a4570; }
+    .side a { flex:1 0 76px; flex-direction:column; justify-content:center; gap:3px; font-size:11px; padding:6px 4px; border-radius:10px; text-align:center; position:relative; min-height:52px; }
     .side .badge { position:absolute; top:2px; right:14px; margin:0; }
+    .kpi { padding:12px 14px; min-height:84px; } .kpi b { font-size:22px; } .kpi .ki { display:none; }
   }
 </style>
 </head>
@@ -235,7 +267,27 @@ function liveness(s) {
                      : el("span", { class: "live ok" }, el("i"), `Buhay · huling update ${at}`);
 }
 function sum(f) { return shops.reduce((n, s) => n + f(s), 0); }
-function card(cls, value, label) { return el("div", { class: "card " + cls }, el("b", {}, value), el("span", {}, label)); }
+const ICON = {
+  coin: '<path d="M12 3v18M16.5 7.5c-.8-1-2.3-1.5-4.5-1.5-2.5 0-4 1-4 2.7 0 4 9 1.8 9 5.6 0 1.8-1.8 2.7-4.5 2.7-2.2 0-3.9-.6-5-1.8"/>',
+  cash: '<rect x="3" y="6" width="18" height="12" rx="2"/><circle cx="12" cy="12" r="2.6"/>',
+  phone: '<rect x="7" y="2.5" width="10" height="19" rx="2"/><path d="M11 18h2"/>',
+  walk: '<circle cx="13" cy="4.5" r="1.8"/><path d="M12 8l-3 4 3 2v6M12 9l4 3M9 12l-2 4"/>',
+  clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+  monitor: '<rect x="3" y="4" width="18" height="12" rx="2"/><path d="M9 20h6M12 16v4"/>',
+  users: '<circle cx="9" cy="8" r="3.2"/><path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6"/><circle cx="17.5" cy="9" r="2.5"/><path d="M17 14.2c2.4.3 4 2.3 4 4.8"/>',
+  inbox: '<path d="M4 13l3-8h10l3 8v6H4z"/><path d="M4 13h5l1 2h4l1-2h5"/>',
+  list: '<path d="M8 6h12M8 12h12M8 18h12M4 6h.01M4 12h.01M4 18h.01"/>',
+};
+// The icons are fixed pieces of this page (never data), turned into elements by the browser.
+function svgIcon(inner) {
+  const doc = new DOMParser().parseFromString(`<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${inner}</svg>`, "image/svg+xml");
+  return document.importNode(doc.documentElement, true);
+}
+function kpi(icon, label, value) {
+  return el("div", { class: "card kpi" }, el("div", {}, el("span", { class: "kl" }, label), el("b", {}, value)),
+    el("span", { class: "ki", "aria-hidden": "true" }, svgIcon(ICON[icon] || "")));
+}
+function kpis(items, six) { return el("div", { class: "kpis" + (six ? " six" : "") }, items.map(([icon, label, value]) => kpi(icon, label, value))); }
 function online(s) { return s.pcs.filter((p) => p.status !== "offline").length; }
 
 function chart(week) {
@@ -244,12 +296,12 @@ function chart(week) {
   const lbl = el("div", { class: "lbl" });
   for (const d of week) {
     bars.append(el("div", { class: "col" },
-      Object.assign(el("i"), { style: `height:${Math.round(d.benta / max * 100)}%;background:#6d28d9` }),
-      Object.assign(el("i"), { style: `height:${Math.round(d.kinita / max * 100)}%;background:#b45309` })));
+      Object.assign(el("i"), { style: `height:${Math.round(d.benta / max * 100)}%;background:#1b3157` }),
+      Object.assign(el("i"), { style: `height:${Math.round(d.kinita / max * 100)}%;background:#f5b82e` })));
     lbl.append(el("div", {}, el("b", {}, new Date(d.date + "T00:00:00").toLocaleDateString("fil-PH", { weekday: "short" })), peso(d.benta)));
   }
   return el("section", { class: "block" }, el("h2", {}, "Kita: huling 7 araw"),
-    el("div", { class: "legend" }, el("span", {}, el("i", { style: "background:#6d28d9" }), "Benta / load"), el("span", {}, el("i", { style: "background:#b45309" }), "Kinita (nagamit)")), bars, lbl);
+    el("div", { class: "legend" }, el("span", {}, el("i", { style: "background:#1b3157" }), "Benta / load"), el("span", {}, el("i", { style: "background:#f5b82e" }), "Kinita (nagamit)")), bars, lbl);
 }
 function pcTable(s) {
   const body = el("tbody");
@@ -262,10 +314,6 @@ function pcTable(s) {
   if (!s.pcs.length) body.append(el("tr", {}, el("td", { colspan: 4, class: "empty" }, "Wala pang PC.")));
   return el("section", { class: "block", style: "overflow-x:auto" }, el("h2", {}, "Mga PC"),
     el("table", {}, el("thead", {}, el("tr", {}, el("th", {}, "PC"), el("th", {}, "Status"), el("th", {}, "Naglalaro"), el("th", {}, "Natitirang oras"))), body));
-}
-function chips(items) {
-  return el("div", { style: "display:flex;flex-wrap:wrap;gap:10px" }, items.map(([v, l]) =>
-    el("div", { class: "block", style: "padding:8px 14px" }, el("b", {}, v), " ", l)));
 }
 function timeText(iso) { return iso ? new Date(iso).toLocaleTimeString("fil-PH", { hour: "numeric", minute: "2-digit" }) : "—"; }
 // The requests waiting for approval. Approve and Reject send ONE tiny note to the Hub (Realtime Database); the Hub
@@ -305,18 +353,18 @@ function requestsBlock(s, branch) {
       // Pressed already: do not show the buttons again while the Hub has not answered.
       const late = Date.now() - sent.at > 60000;
       act.append(el("span", {}, late ? "Hindi pa sumasagot ang Hub. Patay ba ito, o walang internet? " : `Naipadala (${sent.d === "approve" ? "Approve" : "Reject"}). Hinihintay ang Hub… `));
-      if (late) { const again = el("button", { type: "button", style: "min-height:44px;padding:0 14px;border-radius:8px;border:1px solid #a9b8d0;background:#fff;cursor:pointer" }, "Subukan ulit");
+      if (late) { const again = el("button", { type: "button" }, "Subukan ulit");
         again.onclick = () => { delete decided[q.id]; draw(); }; act.append(again); }
     } else if (s.remote) {
-      const ok = el("button", { type: "button", style: "min-height:44px;padding:0 14px;border-radius:8px;border:0;background:#1f9d6a;color:#fff;font-weight:600;cursor:pointer;margin-right:6px" }, q.k === "cash" ? "Natanggap ang cash" : "Approve");
-      const no = el("button", { type: "button", style: "min-height:44px;padding:0 14px;border-radius:8px;border:1px solid #c0392b;background:#fff;color:#c0392b;cursor:pointer" }, "Reject");
+      const ok = el("button", { type: "button", class: "btn-ok", style: "margin-right:6px" }, q.k === "cash" ? "Natanggap ang cash" : "Approve");
+      const no = el("button", { type: "button", class: "btn-no" }, "Reject");
       ok.onclick = () => decideRequest(s.shopId, q, "approve", ok, row); no.onclick = () => decideRequest(s.shopId, q, "reject", no, row);
       act.append(ok, no);
     }
     body.append(row);
   }
   if (!list.length) body.append(el("tr", {}, el("td", { colspan: 5, class: "empty" }, "Walang naghihintay.")));
-  const done = notice && Date.now() < notice.until ? el("p", { style: "margin:0 0 8px;padding:8px 12px;border-radius:10px;background:#dcfce7;color:#14532d;font-weight:600" }, notice.text) : null;
+  const done = notice && Date.now() < notice.until ? el("p", { class: "notice" }, notice.text) : null;
   return el("section", { class: "block", style: "overflow-x:auto" }, el("h2", {}, branch ? `Mga request na naghihintay: ${branch}` : "Mga request na naghihintay"), ...(done ? [done] : []),
     el("p", { class: "empty", style: "margin:0 0 8px" }, s.remote ? "Tingnan muna sa GCash app mo kung pumasok ang bayad at tugma ang reference number bago i-approve."
       : "Naka-off ang pag-approve mula sa phone. I-on sa admin page ng shop (Settings, Cloud)."),
@@ -334,7 +382,7 @@ function accountsBlock(s, branch) {
   fill(s.recent || [], false);
   const msg = el("p", { class: "empty", style: "margin:8px 0 0" });
   const q = el("input", { type: "search", placeholder: "Hanapin ang username", maxlength: "20", "aria-label": "Hanapin ang username", style: "max-width:240px" });
-  const go = el("button", { type: "button", style: "min-height:44px;padding:0 16px;border-radius:8px;border:1px solid #a9b8d0;background:#fff;cursor:pointer" }, "Hanapin");
+  const go = el("button", { type: "button" }, "Hanapin");
   const run = async () => {
     const text = q.value.trim().toLowerCase();
     if (!text) { fill(s.recent || [], false); msg.textContent = ""; return; }
@@ -344,7 +392,7 @@ function accountsBlock(s, branch) {
   };
   go.onclick = run; q.onkeydown = (ev) => { if (ev.key === "Enter") run(); };
   return el("section", { class: "block", style: "overflow-x:auto" }, el("h2", {}, branch ? `Mga account: ${branch}` : "Mga account"),
-    el("div", { style: "display:flex;gap:8px;margin:0 0 10px;flex-wrap:wrap" }, q, go),
+    el("div", { class: "toolbar" }, q, go),
     el("table", {}, el("thead", {}, el("tr", {}, el("th", {}, "Username"), el("th", {}, "Pangalan"), el("th", {}, "Ginawa"), el("th", {}, "Natitirang oras"))), body), msg,
     el("p", { class: "empty", style: "margin:8px 0 0" }, "Ang huling 30 na ginawa. Ang paghahanap ay kumukuha ng hanggang 20 mula sa cloud."));
 }
@@ -384,29 +432,30 @@ addEventListener("hashchange", () => { section = sectionFromHash(); if (idToken)
 
 function oneShop(s) {
   const t = s.today;
-  return el("div", { style: "display:grid;gap:18px" },
+  return el("div", { class: "page" },
     el("div", {}, liveness(s)),
-    el("div", { class: "cards" }, card("c-amber", peso(t.consumed), "Kinita ngayon (nagamit na oras)"), card("c-violet", peso(t.income), "Benta / load ngayon"),
-      card("c-blue", `${online(s)} / ${s.pcs.length}`, "Online na PC"), card("c-teal", t.accounts, "Customer accounts"), card("c-red", t.pending, "Naghihintay ng approval")),
-    chips([[peso(t.cash || 0), "Cash"], [peso(t.gcash || 0), "GCash"], [t.walkins || 0, "Walk-in"]]),
+    kpis([["coin", "Benta / load ngayon", peso(t.income)], ["cash", "Cash", peso(t.cash || 0)], ["phone", "GCash", peso(t.gcash || 0)], ["walk", "Walk-in", t.walkins || 0],
+          ["clock", "Kinita ngayon (nagamit na oras)", peso(t.consumed)], ["monitor", "Online na PC", `${online(s)} / ${s.pcs.length}`],
+          ["users", "Customer accounts", t.accounts], ["inbox", "Naghihintay ng approval", t.pending]]),
     el("div", { class: "grid2" }, pcTable(s), chart(s.week)));
 }
 function stacked(build, title) {                          // one block for a branch, or one per branch under "Lahat ng branch"
   if (current !== "all") return build(shops.find((s) => s.shopId === current), null);
-  return el("div", { style: "display:grid;gap:18px" }, shops.map((s) => build(s, s.shopName)));
+  return el("div", { class: "page" }, shops.map((s) => build(s, s.shopName)));
 }
 function allShops() {
   const body = el("tbody");
-  for (const s of shops) body.append(el("tr", {}, el("td", {}, el("b", {}, s.shopName)), el("td", {}, peso(s.today.consumed)), el("td", {}, peso(s.today.income)),
-    el("td", {}, `${online(s)} / ${s.pcs.length}`), el("td", {}, liveness(s))));
+  for (const s of shops) body.append(el("tr", {}, el("td", {}, el("b", {}, s.shopName)), el("td", { class: "num" }, peso(s.today.income)), el("td", { class: "num" }, peso(s.today.consumed)),
+    el("td", { class: "num" }, `${online(s)} / ${s.pcs.length}`), el("td", {}, liveness(s))));
   const week = {};
   for (const s of shops) for (const d of s.week) { week[d.date] = week[d.date] || { date: d.date, benta: 0, kinita: 0 }; week[d.date].benta += d.benta; week[d.date].kinita += d.kinita; }
-  return el("div", { style: "display:grid;gap:18px" },
-    el("div", { class: "cards" }, card("c-amber", peso(sum((s) => s.today.consumed)), "Kabuuang kinita ngayon"), card("c-violet", peso(sum((s) => s.today.income)), "Kabuuang benta / load ngayon"),
-      card("c-blue", `${sum(online)} / ${sum((s) => s.pcs.length)}`, "Online na PC"), card("c-teal", sum((s) => s.today.accounts), "Customer accounts"), card("c-red", sum((s) => s.today.pending), "Naghihintay ng approval")),
-    chips([[peso(sum((s) => s.today.cash || 0)), "Cash"], [peso(sum((s) => s.today.gcash || 0)), "GCash"], [sum((s) => s.today.walkins || 0), "Walk-in"]]),
+  return el("div", { class: "page" },
+    kpis([["coin", "Kabuuang benta / load ngayon", peso(sum((s) => s.today.income))], ["cash", "Cash", peso(sum((s) => s.today.cash || 0))], ["phone", "GCash", peso(sum((s) => s.today.gcash || 0))],
+          ["walk", "Walk-in", sum((s) => s.today.walkins || 0)], ["clock", "Kabuuang kinita ngayon", peso(sum((s) => s.today.consumed))],
+          ["monitor", "Online na PC", `${sum(online)} / ${sum((s) => s.pcs.length)}`], ["users", "Customer accounts", sum((s) => s.today.accounts)],
+          ["inbox", "Naghihintay ng approval", sum((s) => s.today.pending)]]),
     el("section", { class: "block", style: "overflow-x:auto" }, el("h2", {}, "Bawat branch"),
-      el("table", {}, el("thead", {}, el("tr", {}, el("th", {}, "Branch"), el("th", {}, "Kinita"), el("th", {}, "Benta"), el("th", {}, "Online na PC"), el("th", {}, "Kalagayan"))), body)),
+      el("table", {}, el("thead", {}, el("tr", {}, el("th", {}, "Branch"), el("th", { class: "num" }, "Benta"), el("th", { class: "num" }, "Kinita"), el("th", { class: "num" }, "Online na PC"), el("th", {}, "Kalagayan"))), body)),
     chart(Object.values(week).sort((a, b) => a.date.localeCompare(b.date))));
 }
 function draw() {
@@ -513,14 +562,14 @@ function salesView() {
   ensureSales();
   const r = rangeOf(salesRange), head = el("div", { class: "range", role: "group", "aria-label": "Saklaw" });
   for (const [k, label] of RANGES) { const b = el("button", { type: "button", "aria-pressed": String(salesRange === k) }, label); b.onclick = () => { salesRange = k; draw(); }; head.append(b); }
-  if (salesState.busy || salesState.key === "") return el("div", { style: "display:grid;gap:18px" }, head, el("p", { class: "block empty" }, "Sandali…"));
-  if (salesState.error) return el("div", { style: "display:grid;gap:18px" }, head, el("p", { class: "block empty" }, salesState.error));
+  if (salesState.busy || salesState.key === "") return el("div", { class: "page" }, head, el("p", { class: "block empty" }, "Sandali…"));
+  if (salesState.error) return el("div", { class: "page" }, head, el("p", { class: "block empty" }, salesState.error));
   const rows = salesRows(), total = rows.reduce((a, x) => addInto(a, x), blank("")), by = r.by;
   const max = Math.max(1, ...rows.map((x) => x.income));
   const bars = el("div", { class: "chart", role: "img", "aria-label": "Benta" }), lbl = el("div", { class: "lbl" });
   for (const x of rows) {
-    bars.append(el("div", { class: "col" }, Object.assign(el("i"), { style: `height:${Math.round(x.income / max * 100)}%;background:#6d28d9;width:${rows.length > 14 ? 8 : 16}px` }),
-      Object.assign(el("i"), { style: `height:${Math.round(x.consumed / max * 100)}%;background:#b45309;width:${rows.length > 14 ? 8 : 16}px` })));
+    bars.append(el("div", { class: "col" }, Object.assign(el("i"), { style: `height:${Math.round(x.income / max * 100)}%;background:#1b3157;width:${rows.length > 14 ? 8 : 16}px` }),
+      Object.assign(el("i"), { style: `height:${Math.round(x.consumed / max * 100)}%;background:#f5b82e;width:${rows.length > 14 ? 8 : 16}px` })));
     if (rows.length <= 14) lbl.append(el("div", {}, el("b", {}, by === "month" ? rowLabel(x.date, by).slice(0, 3) : new Date(x.date + "T00:00:00").toLocaleDateString("fil-PH", { weekday: "short" })), peso(x.income)));
   }
   const body = el("tbody");
@@ -532,11 +581,11 @@ function salesView() {
     el("table", {}, el("thead", {}, el("tr", {}, ["Branch", "Benta", "Cash", "GCash", "Kinita"].map((h, i) => el("th", { class: i ? "num" : "" }, h)))),
       el("tbody", {}, shops.map((s) => { const t = [...(salesState.rows[s.shopId] || []), ...(r.by === "day" && r.from <= phToday() && phToday() <= r.to || r.by === "month" ? [todayRow(s)] : [])].reduce((a, x) => addInto(a, x), blank(""));
         return el("tr", {}, el("td", {}, el("b", {}, s.shopName)), el("td", { class: "num" }, peso(t.income)), el("td", { class: "num" }, peso(t.cash)), el("td", { class: "num" }, peso(t.gcash)), el("td", { class: "num" }, peso(t.consumed))); })))) : null;
-  return el("div", { style: "display:grid;gap:18px" }, head,
-    el("div", { class: "cards" }, card("c-violet", peso(total.income), "Benta / load"), card("c-teal", peso(total.cash), "Cash"), card("c-blue", peso(total.gcash), "GCash"),
-      card("c-amber", peso(total.consumed), "Kinita (nagamit na oras)"), card("c-red", `${total.walkins} walk-in · ${total.loads} load`, "Mga load")),
+  return el("div", { class: "page" }, head,
+    kpis([["coin", "Benta / load", peso(total.income)], ["cash", "Cash", peso(total.cash)], ["phone", "GCash", peso(total.gcash)],
+          ["clock", "Kinita (nagamit na oras)", peso(total.consumed)], ["walk", "Walk-in", total.walkins], ["list", "Mga load", total.loads]], true),
     el("section", { class: "block" }, el("h2", {}, by === "month" ? "Benta bawat buwan" : "Benta bawat araw"),
-      el("div", { class: "legend" }, el("span", {}, el("i", { style: "background:#6d28d9" }), "Benta / load"), el("span", {}, el("i", { style: "background:#b45309" }), "Kinita (nagamit)")), bars, lbl),
+      el("div", { class: "legend" }, el("span", {}, el("i", { style: "background:#1b3157" }), "Benta / load"), el("span", {}, el("i", { style: "background:#f5b82e" }), "Kinita (nagamit)")), bars, lbl),
     el("section", { class: "block", style: "overflow-x:auto" }, el("div", { style: "display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap" }, el("h2", { style: "margin:0" }, "Talaan"), csv),
       el("table", {}, el("thead", {}, el("tr", {}, ["Petsa", "Benta", "Cash", "GCash", "Walk-in", "Load", "Oras na nagamit", "Kinita"].map((h, i) => el("th", { class: i ? "num" : "" }, h)))), body),
       el("p", { class: "empty", style: "margin:8px 0 0" }, "Ang mga araw na tapos na ay galing sa cloud; ang ngayon ay galing sa buod. May detalyeng bawat araw hanggang 90 araw; ang mas luma ay buwan-buwan.")),
