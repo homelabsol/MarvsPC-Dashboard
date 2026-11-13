@@ -217,6 +217,10 @@ async function post(url, body, headers) {
   const r = await fetch(url, { method: "POST", headers: headers || { "Content-Type": "application/json" }, body });
   return [r, await r.json().catch(() => ({}))];
 }
+async function get(url) {
+  const r = await fetch(url, { headers: { Authorization: "Bearer " + idToken } });
+  return [r, await r.json().catch(() => ({}))];
+}
 async function signIn(email, password) {
   const [r, d] = await post(`${AUTH}/accounts:signInWithPassword?key=${API_KEY}`, JSON.stringify({ email, password, returnSecureToken: true }));
   if (!r.ok) {
@@ -405,8 +409,9 @@ function accountsBlock(s, branch) {
   const fill = (rows, searching) => {
     body.replaceChildren();
     for (const a of rows) body.append(el("tr", {}, el("td", {}, el("b", {}, a.u)), el("td", {}, a.n || "—"), el("td", {}, dayText(a.c)),
-      el("td", {}, a.m === undefined ? (a.weak ? "mahinang password" : "—") : mins(a.m))));
-    if (!rows.length) body.append(el("tr", {}, el("td", { colspan: 4, class: "empty" }, searching ? "Walang nakita." : "Wala pang account.")));
+      el("td", {}, a.m === undefined ? "—" : mins(a.m)),
+      el("td", {}, a.w || a.weak ? el("span", { class: "pill p-maintenance" }, el("i"), "Mahina (4 digit)") : el("span", { class: "empty" }, "Maayos"))));
+    if (!rows.length) body.append(el("tr", {}, el("td", { colspan: 5, class: "empty" }, searching ? "Walang nakita." : "Wala pang account.")));
   };
   fill(s.recent || [], false);
   const msg = el("p", { class: "empty", style: "margin:8px 0 0" });
@@ -421,8 +426,9 @@ function accountsBlock(s, branch) {
   };
   go.onclick = run; q.onkeydown = (ev) => { if (ev.key === "Enter") run(); };
   return el("section", { class: "block", style: "overflow-x:auto" }, el("h2", {}, branch ? `Mga account: ${branch}` : "Mga account"),
+    ...(s.weakCount ? [el("p", { class: "notice warn" }, `May ${s.weakCount} na account na mahina pa ang password (lumang 4 digit). Pinapaalalahanan sila sa timer at sa lock screen na magpalit.`)] : []),
     el("div", { class: "toolbar" }, q, go),
-    el("table", {}, el("thead", {}, el("tr", {}, el("th", {}, "Username"), el("th", {}, "Pangalan"), el("th", {}, "Ginawa"), el("th", {}, "Natitirang oras"))), body), msg,
+    el("table", {}, el("thead", {}, el("tr", {}, el("th", {}, "Username"), el("th", {}, "Pangalan"), el("th", {}, "Ginawa"), el("th", {}, "Natitirang oras"), el("th", {}, "Password"))), body), msg,
     el("p", { class: "empty", style: "margin:8px 0 0" }, "Ang huling 30 na ginawa. Ang paghahanap ay kumukuha ng hanggang 20 mula sa cloud."));
 }
 // Find accounts by the start of the username (at most 20 reads, only when pressed).
@@ -443,6 +449,8 @@ const SECTIONS = [
   ["requests", "Mga request", '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 13l3-8h10l3 8v6H4z"/><path d="M4 13h5l1 2h4l1-2h5"/></svg>'],
   ["accounts", "Mga account", '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.2"/><path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6"/><circle cx="17.5" cy="9" r="2.5"/><path d="M17 14.2c2.4.3 4 2.3 4 4.8"/></svg>'],
   ["sales", "Benta", '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>'],
+  ["log", "Log", '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="3" width="14" height="18" rx="2"/><path d="M9 8h6M9 12h6M9 16h4"/></svg>'],
+  ["settings", "Settings", '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/></svg>'],
 ];
 let section = "dashboard";
 function sectionFromHash() { const k = (location.hash.match(/^#\/(\w+)/) || [])[1]; return SECTIONS.some((s) => s[0] === k) ? k : "dashboard"; }
@@ -500,11 +508,80 @@ function draw() {
   section = sectionFromHash();
   drawSide();
   const page = section === "requests" ? stacked(requestsBlock) : section === "accounts" ? stacked(accountsBlock)
+    : section === "log" ? stacked(logBlock) : section === "settings" ? stacked(settingsBlock)
     : section === "sales" ? salesView() : current === "all" ? allShops() : oneShop(shops.find((s) => s.shopId === current));
   $("#view").replaceChildren(page);
   $("#foot").textContent = "Pagtingin lang ito. Hindi magbabago ang shop mula rito. Kusang nag-a-update habang tinitingnan mo ito"
     + (fetchedAt ? ` (huling kuha: ${fetchedAt.toLocaleTimeString("fil-PH", { hour: "numeric", minute: "2-digit", second: "2-digit" })}).` : ".");
 }
+// ----- Log: the important lines of the shop's log (the cloud's copy) and its newest seal -----
+// Read only when the page is opened and when I-refresh is pressed (at most 51 reads); never by itself.
+let logCache = {}, cfgCache = {};
+const docUrl = (shopId) => `projects/${PROJECT}/databases/(default)/documents/shops/${shopId}`;
+async function newest(shopId, collection, field, limit) {
+  const q = { structuredQuery: { from: [{ collectionId: collection }], limit, orderBy: [{ field: { fieldPath: field }, direction: "DESCENDING" }] } };
+  const [r, d] = await post(`${STORE}/${docUrl(shopId)}:runQuery`, JSON.stringify(q), { "Content-Type": "application/json", Authorization: "Bearer " + idToken });
+  if (!r.ok) throw new Error(collection);
+  return d.filter((x) => x.document).map((x) => fromFs({ mapValue: { fields: x.document.fields } }));
+}
+function logBlock(s, branch) {
+  const st = logCache[s.shopId];
+  const title = el("h2", {}, branch ? `Log: ${branch}` : "Log");
+  if (!st) {
+    logCache[s.shopId] = { busy: true };
+    Promise.all([newest(s.shopId, "events", "at", 50), newest(s.shopId, "anchors", "lastId", 1)])
+      .then(([events, seal]) => {                       // the newest first, also for lines of the same second (the number of the line breaks the tie)
+        events.sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : (b.auditId || 0) - (a.auditId || 0)));
+        logCache[s.shopId] = { events, seal: seal[0] || null };
+      })
+      .catch(() => { logCache[s.shopId] = { error: true }; })
+      .finally(() => { if (section === "log") draw(); });
+    return el("section", { class: "block" }, title, el("p", { class: "empty" }, "Sandali…"));
+  }
+  if (st.busy) return el("section", { class: "block" }, title, el("p", { class: "empty" }, "Sandali…"));
+  if (st.error) return el("section", { class: "block" }, title, el("p", { class: "empty" }, "Hindi makuha ang log mula sa cloud. Tingnan kung napa-publish na ang bagong Firestore Rules, at pindutin ang I-refresh."));
+  const body = el("tbody"), count = el("p", { class: "empty", style: "margin:8px 0 0" });
+  const fill = (text) => {
+    const t = text.trim().toLowerCase(), rows = st.events.filter((e) => !t || `${e.who} ${e.text}`.toLowerCase().includes(t));
+    body.replaceChildren(...rows.map((e) => el("tr", {}, el("td", {}, new Date(e.at).toLocaleString("fil-PH", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })), el("td", {}, e.who), el("td", { style: "white-space:normal;min-width:260px" }, e.text))));
+    if (!rows.length) body.append(el("tr", {}, el("td", { colspan: 3, class: "empty" }, st.events.length ? "Walang tugma." : "Wala pang tala sa cloud.")));
+    count.textContent = `Ipinapakita ang ${rows.length} sa huling ${st.events.length} na mahahalagang tala.`;
+  };
+  const q = el("input", { type: "search", placeholder: "Hanapin sa log (pangalan o salita)", "aria-label": "Hanapin sa log", style: "max-width:300px" });
+  q.oninput = () => fill(q.value); fill("");
+  const seal = st.seal ? `Huling selyo sa cloud: linya #${st.seal.lastId}, ${new Date(st.seal.at).toLocaleString("fil-PH", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}. Ang selyo ay hindi na mababago kaya mahuhuli kung binago ang log sa Hub.` : "Wala pang selyo sa cloud.";
+  return el("section", { class: "block", style: "overflow-x:auto" }, title, el("p", { class: "empty", style: "margin:0 0 10px" }, seal), el("div", { class: "toolbar" }, q),
+    el("table", {}, el("thead", {}, el("tr", {}, el("th", {}, "Oras"), el("th", {}, "Sino"), el("th", {}, "Ano ang nangyari"))), body), count,
+    el("p", { class: "empty", style: "margin:8px 0 0" }, "Mahahalagang tala lang (Settings, rates, password, mga bantay, Owner mode, pag-approve mula sa phone, at iba pa), walang password. Ang buong log ay nasa admin page ng shop."));
+}
+// ----- Settings: the shop's settings and rates as the cloud has them (read only) -----
+const SETTING_LABELS = { shop_name: "Pangalan ng shop", idle_logout_minutes: "Auto-logout kapag idle (minuto)", after_session: "Pagkatapos ng session", clear_browsers: "Burahin ang browser data",
+  auto_shutdown_minutes: "Auto-shutdown (minuto)", connection_grace_seconds: "Palugit kapag nawala ang koneksyon (segundo)", internet_policy: "Kapag walang internet", custom_amount_enabled: "Ibang halaga ng customer" };
+const VALUE_LABELS = { after_session: { close_apps: "Isara ang apps", restart: "I-restart ang PC" }, internet_policy: { continue: "Tuloy ang shop", walkin_only: "Walk-in lang" } };
+function settingsBlock(s, branch) {
+  const st = cfgCache[s.shopId], title = el("h2", {}, branch ? `Settings at rates: ${branch}` : "Settings at rates");
+  if (!st) {
+    cfgCache[s.shopId] = { busy: true };
+    get(`${STORE}/${docUrl(s.shopId)}/config/main`)
+      .then(([r, d]) => { cfgCache[s.shopId] = r.ok ? { cfg: fromFs({ mapValue: { fields: d.fields } }) } : { error: r.status === 404 ? "none" : "denied" }; })
+      .catch(() => { cfgCache[s.shopId] = { error: "denied" }; })
+      .finally(() => { if (section === "settings") draw(); });
+    return el("section", { class: "block" }, title, el("p", { class: "empty" }, "Sandali…"));
+  }
+  if (st.busy) return el("section", { class: "block" }, title, el("p", { class: "empty" }, "Sandali…"));
+  if (st.error) return el("section", { class: "block" }, title, el("p", { class: "empty" }, st.error === "none" ? "Wala pang settings sa cloud. Ipapadala ito ng Hub pagkatapos ng ilang minuto." : "Hindi makuha ang settings mula sa cloud. Tingnan ang Firestore Rules."));
+  const c = st.cfg, rates = el("tbody"), sets = el("tbody");
+  for (const r of (c.rates || []).slice().sort((a, b) => a.amount - b.amount)) rates.append(el("tr", {}, el("td", {}, el("b", {}, peso(r.amount))), el("td", { class: "num" }, mins(r.minutes))));
+  if (!(c.rates || []).length) rates.append(el("tr", {}, el("td", { colspan: 2, class: "empty" }, "Walang rate.")));
+  for (const [k, v] of Object.entries(c.settings || {})) sets.append(el("tr", {}, el("td", { style: "white-space:normal" }, SETTING_LABELS[k] || k), el("td", { style: "white-space:normal" }, typeof v === "boolean" ? (v ? "Oo" : "Hindi") : ((VALUE_LABELS[k] || {})[v] || String(v)))));
+  const at = c.updatedAt ? new Date(c.updatedAt).toLocaleString("fil-PH", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "—";
+  return el("div", { class: "page" }, el("section", { class: "block" }, title,
+      el("p", { class: "empty", style: "margin:0" }, `Bersyon ${c.version} · huling pagbabago: ${at}. Pagtingin lang ito; palitan ang settings sa admin page ng shop.`)),
+    el("div", { class: "two" },
+      el("section", { class: "block" }, el("h2", {}, "Mga rate"), el("table", {}, el("thead", {}, el("tr", {}, el("th", {}, "Bayad"), el("th", { class: "num" }, "Oras na makukuha"))), rates)),
+      el("section", { class: "block", style: "overflow-x:auto" }, el("h2", {}, "Settings"), el("table", {}, el("thead", {}, el("tr", {}, el("th", {}, "Setting"), el("th", {}, "Halaga"))), sets))));
+}
+
 // ----- Benta at ulat: sales per day, week, month and year, with a custom range, a comparison, and the reports -----
 // Days that are over come from the cloud (one small document per day, sent by the Hub once the day is over, and one
 // per finished month); today comes from the summary the page already has. Reading is bounded: a range of days is at
@@ -772,7 +849,7 @@ $("#loginForm").addEventListener("submit", async (ev) => {
   catch (e) { $("#loginMsg").textContent = e.message; }
 });
 $("#logout").addEventListener("click", leave);
-$("#refresh").addEventListener("click", () => { salesCache = {}; salesState = { key: "", data: null, prev: null, busy: false, error: "", note: "" }; load().catch(() => {}); });
+$("#refresh").addEventListener("click", () => { logCache = {}; cfgCache = {}; salesCache = {}; salesState = { key: "", data: null, prev: null, busy: false, error: "", note: "" }; load().catch(() => {}); });
 (async () => { if (await resume()) { $("#who").textContent = "naka-login"; open(); } else $("#loginBox").classList.remove("hidden"); })();
 </script>
 </body>
