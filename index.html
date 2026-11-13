@@ -108,6 +108,33 @@
     .side .badge { position:absolute; top:2px; right:14px; margin:0; }
     .kpi { padding:12px 14px; min-height:84px; } .kpi b { font-size:22px; } .kpi .ki { display:none; }
   }
+
+  .pagehead { display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; }
+  .pagehead h1 { margin:0; font-size:22px; }
+  .pagehead .actions { display:flex; gap:8px; flex-wrap:wrap; }
+  .fields { display:flex; flex-wrap:wrap; gap:12px; align-items:end; background:var(--surface); border:1px solid var(--line); border-radius:14px; padding:12px 16px; box-shadow:var(--shadow); }
+  .fields label { display:grid; gap:4px; font-size:12px; color:var(--muted); }
+  .fields input[type=date] { min-height:40px; width:160px; }
+  .fields .sw { display:flex; align-items:center; gap:8px; color:var(--ink); font-size:14px; min-height:40px; cursor:pointer; }
+  .sw input { position:absolute; opacity:0; width:1px; height:1px; }
+  .sw i { width:38px; height:22px; border-radius:99px; background:#c5d0e2; position:relative; display:inline-block; transition:background .15s; flex:0 0 38px; }
+  .sw i::after { content:""; position:absolute; left:3px; top:3px; width:16px; height:16px; border-radius:50%; background:#fff; transition:left .15s; }
+  .sw input:checked + i { background:var(--navy); } .sw input:checked + i::after { left:19px; }
+  .sw input:focus-visible + i { outline:3px solid var(--gold); outline-offset:2px; }
+  .delta { display:block; font-size:12px; margin-top:4px; color:var(--muted); } .delta.up, td.up { color:#15803d; } .delta.down, td.down { color:#b45309; }
+  .top3 { display:grid; grid-template-columns:minmax(0, 2fr) minmax(0, 1fr); gap:16px; }
+  .two { display:grid; grid-template-columns:minmax(0, 1fr) minmax(0, 1fr); gap:16px; }
+  .split { display:flex; height:26px; border-radius:8px; overflow:hidden; margin:10px 0 8px; background:#e6ecf5; } .split span { display:block; }
+  .legend2 { display:flex; flex-wrap:wrap; gap:18px; font-size:13px; color:var(--muted); } .legend2 i { display:inline-block; width:10px; height:10px; border-radius:3px; margin-right:6px; }
+  .notice.warn { background:var(--warnbg); color:var(--warn); }
+  .printhead { display:none; }
+  @media (max-width: 900px) { .top3, .two { grid-template-columns:minmax(0, 1fr); } }
+  @media print {
+    body { background:#fff; } .top, .side, .tabs, .range, .fields, .pagehead .actions, .foot, .toolbar, button { display:none !important; }
+    .shell { display:block; } main { padding:0; max-width:none; }
+    .block, .kpi { box-shadow:none; break-inside:avoid; } .printhead { display:flex; justify-content:space-between; gap:12px; font-size:16px; border-bottom:2px solid #10233f; padding-bottom:8px; }
+    .pagehead h1 { font-size:20px; }
+  }
 </style>
 </head>
 <body>
@@ -277,6 +304,8 @@ const ICON = {
   users: '<circle cx="9" cy="8" r="3.2"/><path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6"/><circle cx="17.5" cy="9" r="2.5"/><path d="M17 14.2c2.4.3 4 2.3 4 4.8"/>',
   inbox: '<path d="M4 13l3-8h10l3 8v6H4z"/><path d="M4 13h5l1 2h4l1-2h5"/>',
   list: '<path d="M8 6h12M8 12h12M8 18h12M4 6h.01M4 12h.01M4 18h.01"/>',
+  avg: '<path d="M4 18l5-6 4 3 7-9"/><path d="M4 21h17"/>',
+  star: '<path d="M12 3l2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1L3.2 9.5l6.1-.9z"/>',
 };
 // The icons are fixed pieces of this page (never data), turned into elements by the browser.
 function svgIcon(inner) {
@@ -476,22 +505,36 @@ function draw() {
   $("#foot").textContent = "Pagtingin lang ito. Hindi magbabago ang shop mula rito. Kusang nag-a-update habang tinitingnan mo ito"
     + (fetchedAt ? ` (huling kuha: ${fetchedAt.toLocaleTimeString("fil-PH", { hour: "numeric", minute: "2-digit", second: "2-digit" })}).` : ".");
 }
-// ----- Benta: sales per day, week, month and year -----
-// Days that are over come from the cloud (one small document per day, sent by the Hub once the day is over, and one per
-// finished month); today comes from the summary the page already has. Reading is bounded: a month is at most 31 reads.
-const RANGES = [["today", "Ngayon"], ["last7", "7 araw"], ["month", "Ngayong buwan"], ["lastmonth", "Nakaraang buwan"], ["year", "Ngayong taon"]];
-let salesRange = "last7", salesCache = {}, salesState = { key: "", rows: {}, busy: false, error: "" };
+// ----- Benta at ulat: sales per day, week, month and year, with a custom range, a comparison, and the reports -----
+// Days that are over come from the cloud (one small document per day, sent by the Hub once the day is over, and one
+// per finished month); today comes from the summary the page already has. Reading is bounded: a range of days is at
+// most 90 reads (a month about 31), a year about 43, and the comparison reads the same again.
+const RANGES = [["today", "Ngayon"], ["yesterday", "Kahapon"], ["last7", "7 araw"], ["last30", "30 araw"], ["month", "Ngayong buwan"], ["lastmonth", "Nakaraang buwan"], ["year", "Ngayong taon"], ["custom", "Custom"]];
+let salesRange = "last7", salesGroup = "day", salesCompare = false, salesFrom = "", salesTo = "", salesCache = {};
+let salesState = { key: "", data: null, prev: null, busy: false, error: "", note: "" };
+const MAX_DAYS = 90;
 const phToday = () => new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Manila" });
 const addDays = (iso, n) => { const d = new Date(iso + "T00:00:00Z"); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
 const monthStart = (iso) => iso.slice(0, 7) + "-01";
 const monthEnd = (iso) => { const d = new Date(monthStart(iso) + "T00:00:00Z"); d.setUTCMonth(d.getUTCMonth() + 1); d.setUTCDate(0); return d.toISOString().slice(0, 10); };
+const weekStart = (iso) => addDays(iso, -((new Date(iso + "T00:00:00Z").getUTCDay() + 6) % 7));
+const daysBetween = (a, b) => Math.round((new Date(b + "T00:00:00Z") - new Date(a + "T00:00:00Z")) / 86400000) + 1;
 function rangeOf(key) {
   const today = phToday();
   if (key === "today") return { from: today, to: today, by: "day" };
+  if (key === "yesterday") return { from: addDays(today, -1), to: addDays(today, -1), by: "day" };
   if (key === "last7") return { from: addDays(today, -6), to: today, by: "day" };
+  if (key === "last30") return { from: addDays(today, -29), to: today, by: "day" };
   if (key === "month") return { from: monthStart(today), to: today, by: "day" };
   if (key === "lastmonth") { const e = addDays(monthStart(today), -1); return { from: monthStart(e), to: e, by: "day" }; }
+  if (key === "custom") return { from: salesFrom || addDays(today, -6), to: salesTo || today, by: "day" };
   return { from: today.slice(0, 4) + "-01-01", to: today, by: "month" };
+}
+// The period just before, of the same length (a year: the same months of the year before).
+function prevRangeOf(r) {
+  if (r.by === "month") { const y = String(Number(r.from.slice(0, 4)) - 1); return { from: y + r.from.slice(4), to: y + r.to.slice(4), by: "month" }; }
+  if (salesRange === "month" || salesRange === "lastmonth") { const e = addDays(monthStart(r.from), -1); return { from: monthStart(e), to: addDays(monthStart(e), daysBetween(r.from, r.to) - 1) > e ? e : addDays(monthStart(e), daysBetween(r.from, r.to) - 1), by: "day" }; }
+  const n = daysBetween(r.from, r.to); return { from: addDays(r.from, -n), to: addDays(r.from, -1), by: "day" };
 }
 async function fetchDocs(shopId, collection, fromKey, toKey) {
   const parent = `projects/${PROJECT}/databases/(default)/documents/data/${uid}/shops/${shopId}`;
@@ -504,92 +547,212 @@ async function fetchDocs(shopId, collection, fromKey, toKey) {
   if (!r.ok) throw new Error("benta");
   return d.filter((x) => x.document).map((x) => fromFs({ mapValue: { fields: x.document.fields } }));
 }
-const blank = (date) => ({ date, income: 0, cash: 0, gcash: 0, walkins: 0, loads: 0, minutes: 0, consumed: 0 });
-const addInto = (a, b) => { for (const k of ["income", "cash", "gcash", "walkins", "loads", "minutes", "consumed"]) a[k] = (a[k] || 0) + (b[k] || 0); return a; };
-function todayRow(s) { const t = s.today || {}; return { date: phToday(), income: t.income || 0, cash: t.cash || 0, gcash: t.gcash || 0, walkins: t.walkins || 0, loads: t.loads || 0, minutes: t.minutes || 0, consumed: t.consumed || 0 }; }
-// The finished part of a range for one branch (from the cloud), as rows. Cached: a finished day does not change.
-async function pastRows(shopId, key) {
-  const today = phToday(), ck = `${shopId}|${key}|${today}`;
+// A row is one day (or month): the money, and the details (PCs, the pesos of each hour, who loaded).
+const NUMS = ["income", "cash", "gcash", "walkins", "loads", "minutes", "consumed"];
+const blank = (date) => ({ date, income: 0, cash: 0, gcash: 0, walkins: 0, loads: 0, minutes: 0, consumed: 0, pcs: [], hours: new Array(24).fill(0), staff: [] });
+function mergeList(a, b, keys) {
+  const m = new Map(a.map((x) => [x.n, { ...x }]));
+  for (const x of b) { const t = m.get(x.n) || { n: x.n, ...Object.fromEntries(keys.map((k) => [k, 0])) }; for (const k of keys) t[k] = (t[k] || 0) + (x[k] || 0); m.set(x.n, t); }
+  return [...m.values()];
+}
+function addInto(a, b) {
+  for (const k of NUMS) a[k] = (a[k] || 0) + (b[k] || 0);
+  a.pcs = mergeList(a.pcs || [], b.pcs || [], ["s", "m", "c"]); a.staff = mergeList(a.staff || [], b.staff || [], ["c", "g", "l"]);
+  a.hours = (a.hours || new Array(24).fill(0)).map((v, i) => v + ((b.hours || [])[i] || 0));
+  return a;
+}
+const norm = (d) => Object.assign(blank(d.date), d, { pcs: d.pcs || [], staff: d.staff || [], hours: d.hours && d.hours.length === 24 ? d.hours : new Array(24).fill(0) });
+function todayRow(s) { const t = s.today || {}, x = s.todayDetail || {}; return norm({ date: phToday(), income: t.income || 0, cash: t.cash || 0, gcash: t.gcash || 0, walkins: t.walkins || 0, loads: t.loads || 0, minutes: t.minutes || 0, consumed: t.consumed || 0, pcs: x.pcs, hours: x.hours, staff: x.staff }); }
+const withBranch = (rows, s) => (current === "all" && shops.length > 1)
+  ? rows.map((r) => ({ ...r, pcs: (r.pcs || []).map((p) => ({ ...p, n: `${s.shopName} · ${p.n}` })) })) : rows;
+// The rows of a range for one branch: the finished part from the cloud (cached: a finished day does not change), plus today.
+async function pastRows(shopId, r) {
+  const today = phToday(), ck = `${shopId}|${r.from}|${r.to}|${r.by}|${today}`;
   if (salesCache[ck]) return salesCache[ck];
-  const r = rangeOf(key), yesterday = addDays(today, -1);
-  let rows = [];
+  const yesterday = addDays(today, -1);
+  let rows = [], partial = false;
   if (r.by === "day") {
     const to = r.to < yesterday ? r.to : yesterday;
     if (r.from <= to) rows = await fetchDocs(shopId, "days", r.from, to);
-  } else {                                              // a year: finished months, and this month's finished days as one row
-    rows = await fetchDocs(shopId, "months", r.from.slice(0, 7), addDays(monthStart(today), -1).slice(0, 7));
-    const mdays = monthStart(today) <= yesterday ? await fetchDocs(shopId, "days", monthStart(today), yesterday) : [];
-    if (mdays.length) rows.push(mdays.reduce((a, d) => addInto(a, d), blank(today.slice(0, 7))));
+    if (r.from < addDays(today, -(MAX_DAYS - 1))) partial = true;
+  } else {                                              // months: the finished ones, and this year's current month from its finished days
+    // the finished months of the range (this month is not finished: it comes from its finished days and from today)
+    const lastFinished = r.to.slice(0, 7) < today.slice(0, 7) ? r.to.slice(0, 7) : addDays(monthStart(today), -1).slice(0, 7);
+    rows = r.from.slice(0, 7) <= lastFinished ? await fetchDocs(shopId, "months", r.from.slice(0, 7), lastFinished) : [];
+    if (r.to.slice(0, 7) === today.slice(0, 7)) {
+      const mdays = monthStart(today) <= yesterday ? await fetchDocs(shopId, "days", monthStart(today), yesterday) : [];
+      if (mdays.length) rows.push(mdays.reduce((a, d) => addInto(a, norm(d)), blank(today.slice(0, 7))));
+    }
   }
-  return (salesCache[ck] = rows);
+  return (salesCache[ck] = { rows: rows.map(norm), partial });
+}
+async function loadRange(r) {
+  const mine = current === "all" ? shops : shops.filter((x) => x.shopId === current), today = phToday(), all = [], parts = [];
+  let partial = false;
+  for (const s of mine) {
+    const pr = await pastRows(s.shopId, r);
+    partial = partial || pr.partial;
+    let rows = withBranch(pr.rows.map((x) => addInto(blank(x.date), x)), s);       // a copy: today is added to it, and the cache must stay as read
+    if (r.by === "day" && r.from <= today && today <= r.to) rows = rows.concat(withBranch([todayRow(s)], s));
+    if (r.by === "month" && r.to.slice(0, 7) === today.slice(0, 7)) {              // this month: its finished days (one row, from above) plus today
+      const key = today.slice(0, 7), t = withBranch([todayRow(s)], s)[0], f = rows.find((x) => x.date === key);
+      if (f) addInto(f, t); else rows.push({ ...t, date: key });
+    }
+    parts.push(...rows);
+  }
+  const byKey = {};
+  for (const row of parts) addInto(byKey[row.date] = byKey[row.date] || blank(row.date), row);
+  if (r.by === "day") { for (let d = r.from; d <= r.to; d = addDays(d, 1)) all.push(byKey[d] || blank(d)); }
+  else { for (let m = Number(r.from.slice(5, 7)); m <= Number(r.to.slice(5, 7)); m++) { const k = `${r.from.slice(0, 4)}-${String(m).padStart(2, "0")}`; all.push(byKey[k] || blank(k)); } }
+  return { rows: all, partial, range: r };
 }
 async function ensureSales() {
-  const key = salesRange + "|" + (current === "all" ? shops.map((s) => s.shopId).join(",") : current);
-  if (salesState.key === key) return;                  // (after an error it waits for the owner to press I-refresh: every try is a read)
-  salesState = { key, rows: {}, busy: true, error: "" };
+  const key = [salesRange, salesFrom, salesTo, salesCompare, current, shops.map((s) => s.shopId).join(",")].join("|");
+  if (salesState.key === key) return;                  // (after an error it waits for the owner's I-refresh: every try is a read)
+  salesState = { key, data: null, prev: null, busy: true, error: "", note: "" };
   try {
-    for (const s of (current === "all" ? shops : shops.filter((x) => x.shopId === current))) salesState.rows[s.shopId] = await pastRows(s.shopId, salesRange);
-  } catch (e) { salesState.error = "Hindi makuha ang benta mula sa cloud. Subukan ulit (I-refresh)."; }
+    const r = rangeOf(salesRange);
+    if (r.from > r.to) throw new Error("Mali ang petsa: dapat mas huli ang Hanggang kaysa Mula.");
+    if (r.by === "day" && daysBetween(r.from, r.to) > MAX_DAYS) throw new Error(`Hanggang ${MAX_DAYS} araw lang ang detalye bawat araw. Para sa mas mahaba, piliin ang Ngayong taon.`);
+    salesState.data = await loadRange(r);
+    if (salesCompare) salesState.prev = await loadRange(prevRangeOf(r));
+  } catch (e) { salesState.error = /^Mali|^Hanggang/.test(e.message) ? e.message : "Hindi makuha ang benta mula sa cloud. Subukan ulit (I-refresh)."; }
   salesState.busy = false;
   if (section === "sales") draw();
 }
-// All the rows to show: the finished ones of each branch added together, plus today (from the summary).
-function salesRows() {
-  const r = rangeOf(salesRange), today = phToday(), mine = current === "all" ? shops : shops.filter((s) => s.shopId === current), byKey = {};
-  for (const s of mine) for (const row of salesState.rows[s.shopId] || []) addInto(byKey[row.date] = byKey[row.date] || blank(row.date), row);
-  if (r.by === "day") {
-    for (const s of mine) if (r.from <= today && today <= r.to) addInto(byKey[today] = byKey[today] || blank(today), todayRow(s));
-    const out = [];
-    for (let d = r.from; d <= r.to; d = addDays(d, 1)) out.push(byKey[d] || blank(d));
-    return out;
-  }
-  for (const s of mine) addInto(byKey[today.slice(0, 7)] = byKey[today.slice(0, 7)] || blank(today.slice(0, 7)), todayRow(s));
-  const out = [];
-  for (let m = 1; m <= Number(today.slice(5, 7)); m++) { const k = `${today.slice(0, 4)}-${String(m).padStart(2, "0")}`; out.push(byKey[k] || blank(k)); }
-  return out;
+function aggregate(rows) { return rows.reduce((a, x) => addInto(a, x), blank("")); }
+// Group the day rows by week or by month (only for ranges of days).
+function groupRows(rows, by, group) {
+  if (by === "month" || group === "day") return rows;
+  const m = new Map();
+  for (const r of rows) { const k = group === "week" ? weekStart(r.date) : monthStart(r.date); addInto(m.get(k) || m.set(k, blank(k)).get(k), r); }
+  return [...m.values()];
 }
-function rowLabel(date, by) {
-  return by === "month" ? new Date(date + "-01T00:00:00").toLocaleDateString("fil-PH", { month: "long" })
-    : new Date(date + "T00:00:00").toLocaleDateString("fil-PH", { month: "short", day: "numeric", weekday: "short" });
+const monthName = (key, long) => new Date(key + "-01T00:00:00").toLocaleDateString("fil-PH", { month: long ? "long" : "short" });
+function rowLabel(date, by, group) {
+  if (by === "month" || (group === "month")) return monthName(date.slice(0, 7), true);
+  if (group === "week") { const e = addDays(date, 6), a = new Date(date + "T00:00:00"), b = new Date(e + "T00:00:00"); return `${a.toLocaleDateString("fil-PH", { month: "short", day: "numeric" })} – ${b.toLocaleDateString("fil-PH", { month: a.getMonth() === b.getMonth() ? undefined : "short", day: "numeric" })}`; }
+  return new Date(date + "T00:00:00").toLocaleDateString("fil-PH", { month: "short", day: "numeric", weekday: "short" });
 }
-function salesCsv(rows, by) {
+const pct = (cur, prev) => (prev ? Math.round((cur - prev) * 100 / prev) : null);
+function deltaNote(cur, prev) {
+  const p = prev == null ? null : pct(cur, prev);
+  return p === null ? null : el("span", { class: "delta " + (p >= 0 ? "up" : "down") }, `${p >= 0 ? "▲" : "▼"} ${Math.abs(p)}% sa nakaraang panahon`);
+}
+function salesTile(icon, label, value, extra) {
+  const t = kpi(icon, label, value);
+  if (extra) t.firstChild.append(typeof extra === "string" ? el("span", { class: "delta" }, extra) : extra);
+  return t;
+}
+function periodText(r) {
+  const f = (iso) => new Date(iso + "T00:00:00").toLocaleDateString("fil-PH", { month: "short", day: "numeric", year: "numeric" });
+  return r.by === "month" ? `Enero hanggang ${monthName(r.to.slice(0, 7), true)} ${r.to.slice(0, 4)}` : r.from === r.to ? f(r.from) : `${f(r.from)} hanggang ${f(r.to)}`;
+}
+function salesCsv(rows, r, group) {
   const q = (v) => `"${String(v).replace(/"/g, '""')}"`;
-  const lines = ["Petsa,Benta,Cash,GCash,Walk-in,Load,Minuto,Kinita"].concat(rows.map((r) => [r.date, r.income, r.cash, r.gcash, r.walkins, r.loads, r.minutes, r.consumed].map(q).join(",")));
-  const a = el("a", { href: URL.createObjectURL(new Blob(["\ufeff" + lines.join("\r\n")], { type: "text/csv;charset=utf-8" })), download: `benta-${salesRange}.csv` });
+  const lines = ["Petsa,Benta,Cash,GCash,Walk-in,Load,Minuto,Kinita"].concat(rows.map((x) => [x.date, x.income, x.cash, x.gcash, x.walkins, x.loads, x.minutes, x.consumed].map(q).join(",")));
+  const a = el("a", { href: URL.createObjectURL(new Blob(["\ufeff" + lines.join("\r\n")], { type: "text/csv;charset=utf-8" })), download: `benta-${r.from}-${r.to}.csv` });
   a.click(); URL.revokeObjectURL(a.href);
+}
+function seg(options, value, onpick, label) {
+  const box = el("div", { class: "range", role: "group", "aria-label": label });
+  for (const [k, text] of options) { const b = el("button", { type: "button", "aria-pressed": String(value === k) }, text); b.onclick = () => onpick(k); box.append(b); }
+  return box;
+}
+function salesControls() {
+  const r = rangeOf(salesRange), page = [];
+  page.push(el("div", { class: "pagehead" }, el("h1", {}, "Benta at ulat"),
+    el("div", { class: "actions" }, Object.assign(el("button", { type: "button", id: "salesPrint" }, "I-print / PDF"), { onclick: () => window.print() }),
+      Object.assign(el("button", { type: "button", id: "salesCsv" }, "I-download (CSV)"), { onclick: () => { const d = salesState.data; if (d) salesCsv(groupRows(d.rows, d.range.by, salesGroup), d.range, salesGroup); } }))));
+  page.push(seg(RANGES, salesRange, (k) => { salesRange = k; if (k === "custom" && !salesFrom) { salesFrom = addDays(phToday(), -6); salesTo = phToday(); } draw(); }, "Saklaw"));
+  const fields = el("div", { class: "fields" });
+  if (salesRange === "custom") {
+    const from = el("input", { type: "date", id: "salesFrom", value: salesFrom || r.from }), to = el("input", { type: "date", id: "salesTo", value: salesTo || r.to });
+    const go = el("button", { type: "button", class: "primary", id: "salesGo" }, "Ipakita");
+    go.onclick = () => { salesFrom = from.value; salesTo = to.value; salesState.key = ""; draw(); };
+    fields.append(el("label", {}, "Mula", from), el("label", {}, "Hanggang", to));
+    fields.append(go);
+  }
+  if (r.by === "day") fields.append(el("label", {}, "Pangkatin ayon sa", seg([["day", "Araw"], ["week", "Linggo"], ["month", "Buwan"]], salesGroup, (k) => { salesGroup = k; draw(); }, "Pangkat")));
+  const sw = el("input", { type: "checkbox", id: "salesCompare" }); sw.checked = salesCompare;
+  sw.onchange = () => { salesCompare = sw.checked; draw(); };
+  fields.append(el("label", { class: "sw" }, sw, el("i"), "Ihambing sa nakaraang panahon"));
+  page.push(fields);
+  return page;
 }
 function salesView() {
   ensureSales();
-  const r = rangeOf(salesRange), head = el("div", { class: "range", role: "group", "aria-label": "Saklaw" });
-  for (const [k, label] of RANGES) { const b = el("button", { type: "button", "aria-pressed": String(salesRange === k) }, label); b.onclick = () => { salesRange = k; draw(); }; head.append(b); }
-  if (salesState.busy || salesState.key === "") return el("div", { class: "page" }, head, el("p", { class: "block empty" }, "Sandali…"));
-  if (salesState.error) return el("div", { class: "page" }, head, el("p", { class: "block empty" }, salesState.error));
-  const rows = salesRows(), total = rows.reduce((a, x) => addInto(a, x), blank("")), by = r.by;
-  const max = Math.max(1, ...rows.map((x) => x.income));
+  const head = salesControls(), st = salesState;
+  if (st.busy || st.key === "") return el("div", { class: "page" }, ...head, el("p", { class: "block empty" }, "Sandali…"));
+  if (st.error) return el("div", { class: "page" }, ...head, el("p", { class: "block empty" }, st.error));
+  const d = st.data, r = d.range, by = r.by, group = by === "month" ? "month" : salesGroup, rows = groupRows(d.rows, by, group);
+  const total = aggregate(d.rows), prev = st.prev ? aggregate(st.prev.rows) : null;
+  const today = phToday(), upto = r.to < today ? r.to : today, span = by === "month" ? daysBetween(r.from, upto) : daysBetween(r.from, upto), avg = span > 0 ? total.income / span : 0;
+  const prevSpan = st.prev ? (st.prev.range.by === "month" ? daysBetween(st.prev.range.from, st.prev.range.to) : daysBetween(st.prev.range.from, st.prev.range.to)) : 0, prevAvg = prev && prevSpan ? prev.income / prevSpan : null;
+  const best = d.rows.reduce((b, x) => (x.income > (b ? b.income : -1) ? x : b), null);
+  const bestLabel = best && best.income > 0 ? (by === "month" ? monthName(best.date, true) : new Date(best.date + "T00:00:00").toLocaleDateString("fil-PH", { month: "short", day: "numeric", weekday: "short" })) : "—";
+  const dl = (cur, key) => (prev ? deltaNote(cur, prev[key]) : null);
+  const tiles = kpis([], false);
+  tiles.className = "kpis";
+  for (const t of [salesTile("coin", "Benta / load", peso(total.income), dl(total.income, "income")), salesTile("cash", "Cash", peso(total.cash), dl(total.cash, "cash")),
+      salesTile("phone", "GCash", peso(total.gcash), dl(total.gcash, "gcash")), salesTile("walk", "Walk-in", total.walkins, dl(total.walkins, "walkins")),
+      salesTile("clock", "Kinita (nagamit na oras)", peso(total.consumed), dl(total.consumed, "consumed")), salesTile("list", "Mga load", total.loads, dl(total.loads, "loads")),
+      salesTile("avg", "Average kada araw", peso(Math.round(avg * 100) / 100), prevAvg !== null ? deltaNote(avg, prevAvg) : null),
+      salesTile("star", by === "month" ? "Pinakamagandang buwan" : "Pinakamagandang araw", bestLabel, best && best.income > 0 ? peso(best.income) : null)]) tiles.append(t);
+  // the bars
+  const max = Math.max(1, ...rows.map((x) => Math.max(x.income, x.consumed))), wide = rows.length > 14, bw = wide ? 8 : 14;
   const bars = el("div", { class: "chart", role: "img", "aria-label": "Benta" }), lbl = el("div", { class: "lbl" });
   for (const x of rows) {
-    bars.append(el("div", { class: "col" }, Object.assign(el("i"), { style: `height:${Math.round(x.income / max * 100)}%;background:#1b3157;width:${rows.length > 14 ? 8 : 16}px` }),
-      Object.assign(el("i"), { style: `height:${Math.round(x.consumed / max * 100)}%;background:#f5b82e;width:${rows.length > 14 ? 8 : 16}px` })));
-    if (rows.length <= 14) lbl.append(el("div", {}, el("b", {}, by === "month" ? rowLabel(x.date, by).slice(0, 3) : new Date(x.date + "T00:00:00").toLocaleDateString("fil-PH", { weekday: "short" })), peso(x.income)));
+    bars.append(el("div", { class: "col" }, Object.assign(el("i"), { style: `height:${Math.round(x.income / max * 100)}%;background:#1b3157;width:${bw}px` }), Object.assign(el("i"), { style: `height:${Math.round(x.consumed / max * 100)}%;background:#f5b82e;width:${bw}px` })));
+    if (!wide) lbl.append(el("div", {}, el("b", {}, group === "day" ? (by === "month" ? monthName(x.date, false) : new Date(x.date + "T00:00:00").toLocaleDateString("fil-PH", { day: "numeric" })) : rowLabel(x.date, by, group)), peso(x.income)));
   }
+  // cash against GCash, and the busiest hours
+  const cp = total.income ? Math.round(total.cash / total.income * 100) : 0;
+  const split = el("div", { class: "split" }, Object.assign(el("span"), { style: `width:${cp}%;background:#1b3157` }), Object.assign(el("span"), { style: `width:${total.income ? 100 - cp : 0}%;background:#f5b82e` }));
+  const hrs = total.hours, hmax = Math.max(1, ...hrs);
+  const hbars = el("div", { class: "chart", style: "height:130px", role: "img", "aria-label": "Benta bawat oras" }), hl = el("div", { class: "lbl", style: "font-size:11px" });
+  hrs.forEach((v, i) => { hbars.append(el("div", { class: "col" }, Object.assign(el("i"), { style: `height:${v ? Math.max(2, Math.round(v / hmax * 100)) : 0}%;background:#1b3157;width:10px` }))); hl.append(el("div", {}, i % 3 === 0 ? i : "")); });
+  let peak = { at: -1, v: 0, first: -1 }; for (let i = 0; i < 23; i++) { const v = hrs[i] + hrs[i + 1]; if (v > peak.v || (v === peak.v && v > 0 && hrs[i] > peak.first)) peak = { at: i, v, first: hrs[i] }; }   // the busiest two hours in a row (a tie: the one that starts with the busier hour)
+  const hh = (h) => `${((h + 11) % 12) + 1} ${h < 12 ? "AM" : "PM"}`;
+  const peakText = peak.v > 0 && total.income ? el("p", { style: "margin:0;color:var(--muted)" }, "Pinakamaraming benta tuwing ", el("b", { style: "color:var(--ink)" }, `${hh(peak.at)} hanggang ${hh((peak.at + 2) % 24)}`), `: ${peso(peak.v)} (${Math.round(peak.v / total.income * 100)}% ng kabuuan).`) : el("p", { class: "empty", style: "margin:0" }, "Wala pang datos ng oras.");
+  const table = (cols, body, id) => el("table", id ? { id } : {}, el("thead", {}, el("tr", {}, cols.map((h, i) => el("th", { class: i ? "num" : "" }, h)))), body);
+  const hasDetail = total.pcs.length || total.staff.length;
+  const staffBody = el("tbody"); for (const x of total.staff.sort((a, b) => b.c - a.c)) staffBody.append(el("tr", {}, el("td", {}, el("b", {}, x.n)), el("td", { class: "num" }, x.l), el("td", { class: "num" }, peso(x.c)), el("td", { class: "num" }, peso(x.g)), el("td", { class: "num" }, el("b", {}, peso(x.c)))));
+  const pcBody = el("tbody"); for (const x of total.pcs.sort((a, b) => a.n.localeCompare(b.n))) pcBody.append(el("tr", {}, el("td", {}, el("b", {}, x.n)), el("td", { class: "num" }, x.s), el("td", { class: "num" }, mins(x.m)), el("td", { class: "num" }, peso(x.c))));
+  const none = (id) => el("tr", {}, el("td", { colspan: 5, class: "empty" }, "Wala pang datos. Lalabas ito pagkatapos ma-upload ng Hub ang bagong ulat (Settings, Cloud)."));
+  if (!total.staff.length) staffBody.append(none()); if (!total.pcs.length) pcBody.append(none());
   const body = el("tbody");
-  for (const x of rows) body.append(el("tr", {}, el("td", {}, rowLabel(x.date, by)), el("td", { class: "num" }, peso(x.income)), el("td", { class: "num" }, peso(x.cash)),
-    el("td", { class: "num" }, peso(x.gcash)), el("td", { class: "num" }, x.walkins), el("td", { class: "num" }, x.loads), el("td", { class: "num" }, mins(x.minutes)), el("td", { class: "num" }, peso(x.consumed))));
+  for (const x of rows) body.append(el("tr", {}, el("td", {}, rowLabel(x.date, by, group)), el("td", { class: "num" }, peso(x.income)), el("td", { class: "num" }, peso(x.cash)), el("td", { class: "num" }, peso(x.gcash)),
+    el("td", { class: "num" }, x.walkins), el("td", { class: "num" }, x.loads), el("td", { class: "num" }, mins(x.minutes)), el("td", { class: "num" }, peso(x.consumed))));
   body.append(el("tr", {}, el("td", {}, el("b", {}, "Kabuuan")), ...[peso(total.income), peso(total.cash), peso(total.gcash), total.walkins, total.loads, mins(total.minutes), peso(total.consumed)].map((v) => el("td", { class: "num" }, el("b", {}, v)))));
-  const csv = el("button", { type: "button" }, "I-download (CSV)"); csv.onclick = () => salesCsv(rows, by);
+  const cmpRow = (name, cur, old, money) => { const p = pct(cur, old); return el("tr", {}, el("td", {}, name), el("td", { class: "num" }, money ? peso(cur) : cur), el("td", { class: "num" }, money ? peso(old) : old), el("td", { class: "num " + (p === null ? "" : p >= 0 ? "up" : "down") }, p === null ? "—" : `${p >= 0 ? "▲" : "▼"} ${Math.abs(p)}%`)); };
+  const cmp = prev ? el("section", { class: "block" }, el("h2", {}, "Kumpara sa nakaraang panahon"), el("p", { class: "empty", style: "margin:0 0 8px" }, periodText(st.prev.range)),
+    table(["", "Ngayon", "Nakaraan", "Pagbabago"], el("tbody", {}, cmpRow("Benta", total.income, prev.income, true), cmpRow("Cash", total.cash, prev.cash, true), cmpRow("GCash", total.gcash, prev.gcash, true),
+      cmpRow("Walk-in", total.walkins, prev.walkins), cmpRow("Kinita", total.consumed, prev.consumed, true), cmpRow("Mga load", total.loads, prev.loads)))) : null;
   const perBranch = current === "all" && shops.length > 1 ? el("section", { class: "block", style: "overflow-x:auto" }, el("h2", {}, "Bawat branch"),
-    el("table", {}, el("thead", {}, el("tr", {}, ["Branch", "Benta", "Cash", "GCash", "Kinita"].map((h, i) => el("th", { class: i ? "num" : "" }, h)))),
-      el("tbody", {}, shops.map((s) => { const t = [...(salesState.rows[s.shopId] || []), ...(r.by === "day" && r.from <= phToday() && phToday() <= r.to || r.by === "month" ? [todayRow(s)] : [])].reduce((a, x) => addInto(a, x), blank(""));
-        return el("tr", {}, el("td", {}, el("b", {}, s.shopName)), el("td", { class: "num" }, peso(t.income)), el("td", { class: "num" }, peso(t.cash)), el("td", { class: "num" }, peso(t.gcash)), el("td", { class: "num" }, peso(t.consumed))); })))) : null;
-  return el("div", { class: "page" }, head,
-    kpis([["coin", "Benta / load", peso(total.income)], ["cash", "Cash", peso(total.cash)], ["phone", "GCash", peso(total.gcash)],
-          ["clock", "Kinita (nagamit na oras)", peso(total.consumed)], ["walk", "Walk-in", total.walkins], ["list", "Mga load", total.loads]], true),
-    el("section", { class: "block" }, el("h2", {}, by === "month" ? "Benta bawat buwan" : "Benta bawat araw"),
-      el("div", { class: "legend" }, el("span", {}, el("i", { style: "background:#1b3157" }), "Benta / load"), el("span", {}, el("i", { style: "background:#f5b82e" }), "Kinita (nagamit)")), bars, lbl),
-    el("section", { class: "block", style: "overflow-x:auto" }, el("div", { style: "display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap" }, el("h2", { style: "margin:0" }, "Talaan"), csv),
-      el("table", {}, el("thead", {}, el("tr", {}, ["Petsa", "Benta", "Cash", "GCash", "Walk-in", "Load", "Oras na nagamit", "Kinita"].map((h, i) => el("th", { class: i ? "num" : "" }, h)))), body),
-      el("p", { class: "empty", style: "margin:8px 0 0" }, "Ang mga araw na tapos na ay galing sa cloud; ang ngayon ay galing sa buod. May detalyeng bawat araw hanggang 90 araw; ang mas luma ay buwan-buwan.")),
-    ...(perBranch ? [perBranch] : []));
+    table(["Branch", "Benta", "Cash", "GCash", "Kinita"], el("tbody", {}, shops.map((s) => { const sd = salesCache[`${s.shopId}|${r.from}|${r.to}|${r.by}|${today}`];
+      const rs = [...(sd ? sd.rows : []), ...(r.by === "day" && r.from <= today && today <= r.to || r.by === "month" ? [todayRow(s)] : [])].reduce((a, x) => addInto(a, x), blank(""));
+      return el("tr", {}, el("td", {}, el("b", {}, s.shopName)), el("td", { class: "num" }, peso(rs.income)), el("td", { class: "num" }, peso(rs.cash)), el("td", { class: "num" }, peso(rs.gcash)), el("td", { class: "num" }, peso(rs.consumed))); })))) : null;
+  const shopName = current === "all" ? "Lahat ng branch" : (shops.find((x) => x.shopId === current) || {}).shopName || "";
+  return el("div", { class: "page" }, ...head,
+    el("div", { class: "printhead" }, el("b", {}, `${shopName} · Benta at ulat`), el("span", {}, periodText(r))),
+    ...(st.data.partial ? [el("p", { class: "notice warn" }, `Hanggang ${MAX_DAYS} araw lang ang detalye bawat araw. Ang mas luma ay wala sa talaan; piliin ang Ngayong taon para sa buwan-buwan.`)] : []),
+    tiles,
+    el("div", { class: "top3" },
+      el("section", { class: "block" }, el("h2", {}, by === "month" || group === "month" ? "Benta bawat buwan" : group === "week" ? "Benta bawat linggo" : "Benta bawat araw"),
+        el("div", { class: "legend" }, el("span", {}, el("i", { style: "background:#1b3157" }), "Benta / load"), el("span", {}, el("i", { style: "background:#f5b82e" }), "Kinita (nagamit)")), bars, lbl),
+      el("section", { class: "block" }, el("h2", {}, "Cash laban sa GCash"), split,
+        el("div", { class: "legend2" }, el("span", {}, el("i", { style: "background:#1b3157" }), `Cash ${peso(total.cash)} (${cp}%)`), el("span", {}, el("i", { style: "background:#f5b82e" }), `GCash ${peso(total.gcash)} (${total.income ? 100 - cp : 0}%)`)),
+        el("h2", { style: "margin-top:22px" }, "Oras ng pagdagsa"), peakText)),
+    el("div", { class: "two" },
+      el("section", { class: "block" }, el("h2", {}, "Benta bawat oras"), hbars, hl),
+      el("section", { class: "block", style: "overflow-x:auto" }, el("h2", {}, "Bawat bantay (cash na dapat iabot)"), table(["Bantay", "Load", "Cash", "GCash", "Dapat iabot"], staffBody, "salesStaff"))),
+    el("div", { class: cmp ? "two" : "page" },
+      el("section", { class: "block", style: "overflow-x:auto" }, el("h2", {}, "Bawat PC"), table(["PC", "Sessions", "Oras na nagamit", "Kinita"], pcBody, "salesPcs")), ...(cmp ? [cmp] : [])),
+    ...(perBranch ? [perBranch] : []),
+    el("section", { class: "block", style: "overflow-x:auto" }, el("h2", {}, by === "month" || group === "month" ? "Talaan bawat buwan" : group === "week" ? "Talaan bawat linggo" : "Talaan bawat araw"),
+      table(["Petsa", "Benta", "Cash", "GCash", "Walk-in", "Load", "Oras na nagamit", "Kinita"], body, "salesTable"),
+      el("p", { class: "empty", style: "margin:8px 0 0" }, "Ang mga araw na tapos na ay galing sa cloud; ang ngayon ay galing sa buod. May detalyeng bawat araw hanggang 90 araw; ang mas luma ay buwan-buwan. Ang Bawat bantay ay para sa pagsusuri ng cash; walang pangalan ng customer sa cloud.")));
 }
 function tickClocks() {
   document.querySelectorAll("[data-ends]").forEach((td) => { const e = Number(td.dataset.ends); if (e) td.textContent = clock(e - Date.now() / 1000); });
@@ -609,7 +772,7 @@ $("#loginForm").addEventListener("submit", async (ev) => {
   catch (e) { $("#loginMsg").textContent = e.message; }
 });
 $("#logout").addEventListener("click", leave);
-$("#refresh").addEventListener("click", () => { salesCache = {}; salesState = { key: "", rows: {}, busy: false, error: "" }; load().catch(() => {}); });
+$("#refresh").addEventListener("click", () => { salesCache = {}; salesState = { key: "", data: null, prev: null, busy: false, error: "", note: "" }; load().catch(() => {}); });
 (async () => { if (await resume()) { $("#who").textContent = "naka-login"; open(); } else $("#loginBox").classList.remove("hidden"); })();
 </script>
 </body>
