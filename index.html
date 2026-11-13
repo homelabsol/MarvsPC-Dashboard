@@ -535,15 +535,39 @@ async function newest(shopId, collection, field, limit) {
   if (!r.ok) throw new Error(collection);
   return d.filter((x) => x.document).map((x) => fromFs({ mapValue: { fields: x.document.fields } }));
 }
+// The money lines of the journal (loads, vouchers, refunds) in plain words, so the Log shows the Cash loads too.
+// "adjust" is left out: it is already one of the important log lines.
+const JOURNAL_MONEY = ["load", "voucher", "refund"];
+const journalWho = (by) => ({ owner: "Owner", phone: "Owner (phone)", dashboard: "Owner (dashboard)", player: "Customer (GCash)", system: "Sistema" }[by] || (String(by).startsWith("staff:") ? `Bantay: ${String(by).slice(6)}` : by));
+function journalText(e) {
+  const mins = Math.abs(e.m) ? ` (+${mins_(e.m)})` : "";
+  if (e.t === "load") return `${e.n === "gcash" ? "GCash" : "Cash"} load ₱${e.a} kay ${e.p}${mins}`;
+  if (e.t === "voucher") return `Voucher kay ${e.p}${mins}`;
+  return `Refund ₱${e.a} kay ${e.p}`;
+}
+const mins_ = (m) => mins(m);
+async function journalLines(shopId) {                   // the newest groups (3 reads): the lines of money, newest first
+  const parent = `projects/${PROJECT}/databases/(default)/documents/data/${uid}/shops/${shopId}`;
+  const q = { structuredQuery: { from: [{ collectionId: "journal" }], limit: 3, orderBy: [{ field: { fieldPath: "at" }, direction: "DESCENDING" }] } };
+  const [r, d] = await post(`${STORE}/${parent}:runQuery`, JSON.stringify(q), { "Content-Type": "application/json", Authorization: "Bearer " + idToken });
+  if (!r.ok) return [];                                  // no journal yet (or the Rules are old): the Log still shows the rest
+  const out = [];
+  for (const x of d.filter((y) => y.document)) {
+    const doc = fromFs({ mapValue: { fields: x.document.fields } });
+    for (const e of doc.entries || []) if (JOURNAL_MONEY.includes(e.t)) out.push({ at: e.at, who: journalWho(e.by), text: journalText(e), auditId: 0 });
+  }
+  return out;
+}
 function logBlock(s, branch) {
   const st = logCache[s.shopId];
   const title = el("h2", {}, branch ? `Log: ${branch}` : "Log");
   if (!st) {
     logCache[s.shopId] = { busy: true };
-    Promise.all([newest(s.shopId, "events", "at", 50), newest(s.shopId, "anchors", "lastId", 1)])
-      .then(([events, seal]) => {                       // the newest first, also for lines of the same second (the number of the line breaks the tie)
-        events.sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : (b.auditId || 0) - (a.auditId || 0)));
-        logCache[s.shopId] = { events, seal: seal[0] || null };
+    Promise.all([newest(s.shopId, "events", "at", 50), newest(s.shopId, "anchors", "lastId", 1), journalLines(s.shopId).catch(() => [])])
+      .then(([events, seal, money]) => {                // the newest first, also for lines of the same second (the number of the line breaks the tie)
+        const all = events.concat(money);
+        all.sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : (b.auditId || 0) - (a.auditId || 0)));
+        logCache[s.shopId] = { events: all.slice(0, 150), seal: seal[0] || null };
       })
       .catch(() => { logCache[s.shopId] = { error: true }; })
       .finally(() => { if (section === "log") draw(); });
@@ -556,14 +580,14 @@ function logBlock(s, branch) {
     const t = text.trim().toLowerCase(), rows = st.events.filter((e) => !t || `${e.who} ${e.text}`.toLowerCase().includes(t));
     body.replaceChildren(...rows.map((e) => el("tr", {}, el("td", {}, new Date(e.at).toLocaleString("fil-PH", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })), el("td", {}, e.who), el("td", { style: "white-space:normal;min-width:260px" }, e.text))));
     if (!rows.length) body.append(el("tr", {}, el("td", { colspan: 3, class: "empty" }, st.events.length ? "Walang tugma." : "Wala pang tala sa cloud.")));
-    count.textContent = `Ipinapakita ang ${rows.length} sa huling ${st.events.length} na mahahalagang tala.`;
+    count.textContent = `Ipinapakita ang ${rows.length} sa huling ${st.events.length} na tala.`;
   };
   const q = el("input", { type: "search", placeholder: "Hanapin sa log (pangalan o salita)", "aria-label": "Hanapin sa log", style: "max-width:300px" });
   q.oninput = () => fill(q.value); fill("");
   const seal = st.seal ? `Huling selyo sa cloud: linya #${st.seal.lastId}, ${new Date(st.seal.at).toLocaleString("fil-PH", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}. Ang selyo ay hindi na mababago kaya mahuhuli kung binago ang log sa Hub.` : "Wala pang selyo sa cloud.";
   return el("section", { class: "block", style: "overflow-x:auto" }, title, el("p", { class: "empty", style: "margin:0 0 10px" }, seal), el("div", { class: "toolbar" }, q),
     el("table", {}, el("thead", {}, el("tr", {}, el("th", {}, "Oras"), el("th", {}, "Sino"), el("th", {}, "Ano ang nangyari"))), body), count,
-    el("p", { class: "empty", style: "margin:8px 0 0" }, "Mahahalagang tala lang (Settings, rates, password, mga bantay, Owner mode, pag-approve mula sa phone, at iba pa), walang password. Ang buong log ay nasa admin page ng shop."));
+    el("p", { class: "empty", style: "margin:8px 0 0" }, "Mahahalagang tala (Settings, rates, password, mga bantay, Owner mode, pag-approve mula sa phone, at iba pa) at ang mga load (Cash, GCash, voucher, refund), walang password. Ang buong log ay nasa admin page ng shop."));
 }
 // ----- Settings: the shop's settings and rates as the cloud has them (read only) -----
 const SETTING_LABELS = { shop_name: "Pangalan ng shop", idle_logout_minutes: "Auto-logout kapag idle (minuto)", after_session: "Pagkatapos ng session", clear_browsers: "Burahin ang browser data",
