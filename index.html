@@ -135,6 +135,14 @@
     .block, .kpi { box-shadow:none; break-inside:avoid; } .printhead { display:flex; justify-content:space-between; gap:12px; font-size:16px; border-bottom:2px solid #10233f; padding-bottom:8px; }
     .pagehead h1 { font-size:20px; }
   }
+  .cfggrid { display:grid; gap:12px; }
+  .cfgrow { display:grid; grid-template-columns:minmax(0, 1fr) minmax(0, 1fr); gap:10px; align-items:center; font-size:14px; }
+  .cfgrow.check { grid-template-columns:auto 1fr; justify-content:start; cursor:pointer; }
+  .cfgrow.check input { width:20px; min-height:20px; }
+  .cfgrow select { min-height:42px; border:1px solid #c9d4e4; border-radius:10px; padding:0 10px; background:#fff; width:100%; }
+  .raterows { display:grid; gap:8px; }
+  .raterow { display:grid; grid-template-columns:auto minmax(70px, 1fr) auto minmax(80px, 1fr) auto auto; gap:8px; align-items:center; }
+  .raterow button { min-height:38px; padding:0 12px; }
 </style>
 </head>
 <body>
@@ -254,6 +262,7 @@ async function load() {
   await loadAlive();
   fetchedAt = new Date();
   settleDecisions();
+  settleConfig();
   draw();
 }
 
@@ -496,6 +505,8 @@ function allShops() {
     chart(Object.values(week).sort((a, b) => a.date.localeCompare(b.date))));
 }
 function draw() {
+  const typing = document.activeElement;           // typing in a box of the form: do not redraw under the owner's hands (a button is not typing)
+  if (section === "settings" && typing && typing.closest && typing.closest("#cfgForm") && ["INPUT", "SELECT", "TEXTAREA"].includes(typing.tagName) && typing.type !== "checkbox") return;
   const tabs = $("#tabs"); tabs.replaceChildren();
   const mk = (id, text) => { const b = el("button", { type: "button", "aria-pressed": String(current === id) }, text); b.onclick = () => { current = id; draw(); }; tabs.append(b); };
   if (!shops.length) $("#side").replaceChildren();
@@ -511,7 +522,7 @@ function draw() {
     : section === "log" ? stacked(logBlock) : section === "settings" ? stacked(settingsBlock)
     : section === "sales" ? salesView() : current === "all" ? allShops() : oneShop(shops.find((s) => s.shopId === current));
   $("#view").replaceChildren(page);
-  $("#foot").textContent = "Pagtingin lang ito. Hindi magbabago ang shop mula rito. Kusang nag-a-update habang tinitingnan mo ito"
+  $("#foot").textContent = "Pagtingin lang ang karamihan ng pahina. Ang pag-approve ng request at ang pag-edit ng Settings at rates ay gumagana lang kapag pinayagan mo sa admin page ng shop. Kusang nag-a-update habang tinitingnan mo ito"
     + (fetchedAt ? ` (huling kuha: ${fetchedAt.toLocaleTimeString("fil-PH", { hour: "numeric", minute: "2-digit", second: "2-digit" })}).` : ".");
 }
 // ----- Log: the important lines of the shop's log (the cloud's copy) and its newest seal -----
@@ -558,28 +569,145 @@ function logBlock(s, branch) {
 const SETTING_LABELS = { shop_name: "Pangalan ng shop", idle_logout_minutes: "Auto-logout kapag idle (minuto)", after_session: "Pagkatapos ng session", clear_browsers: "Burahin ang browser data",
   auto_shutdown_minutes: "Auto-shutdown (minuto)", connection_grace_seconds: "Palugit kapag nawala ang koneksyon (segundo)", internet_policy: "Kapag walang internet", custom_amount_enabled: "Ibang halaga ng customer" };
 const VALUE_LABELS = { after_session: { close_apps: "Isara ang apps", restart: "I-restart ang PC" }, internet_policy: { continue: "Tuloy ang shop", walkin_only: "Walk-in lang" } };
+function toFs(v) {
+  if (typeof v === "string") return { stringValue: v };
+  if (typeof v === "boolean") return { booleanValue: v };
+  if (typeof v === "number") return Number.isInteger(v) ? { integerValue: String(v) } : { doubleValue: v };
+  if (Array.isArray(v)) return { arrayValue: { values: v.map(toFs) } };
+  return { mapValue: { fields: Object.fromEntries(Object.entries(v).map(([k, x]) => [k, toFs(x)])) } };
+}
+// What may be changed here, and the limits (the Hub checks every value again and refuses what is outside them).
+const SETTING_FIELDS = [
+  ["shop_name", "Pangalan ng shop", "text", 1, 60],
+  ["idle_logout_minutes", "Auto-logout kapag idle (minuto)", "number", 1, 60],
+  ["after_session", "Pagkatapos ng session", "select"],
+  ["clear_browsers", "Burahin ang browser data", "bool"],
+  ["auto_shutdown_minutes", "Auto-shutdown (minuto; 0 = patay)", "number", 0, 1440],
+  ["connection_grace_seconds", "Palugit kapag nawala ang koneksyon (segundo)", "number", 30, 900],
+  ["internet_policy", "Kapag walang internet", "select"],
+  ["custom_amount_enabled", "Ibang halaga ng customer", "bool"],
+];
+let cfgDraft = {}, cfgPending = {}, cfgMsg = {};
+const draftOf = (shopId, cfg) => (cfgDraft[shopId] = cfgDraft[shopId] || { settings: { ...(cfg.settings || {}) }, rates: (cfg.rates || []).map((r) => ({ amount: r.amount, minutes: r.minutes })) });
+function cfgErrors(d) {
+  const e = [], isInt = (v) => Number.isInteger(Number(v)) && String(v).trim() !== "";
+  for (const [k, label, kind, lo, hi] of SETTING_FIELDS) {
+    const v = d.settings[k];
+    if (kind === "text" && !(String(v || "").trim().length >= lo && String(v).trim().length <= hi)) e.push(`${label}: ${lo} hanggang ${hi} na letra.`);
+    if (kind === "number" && !(isInt(v) && Number(v) >= lo && Number(v) <= hi)) e.push(`${label}: ${lo} hanggang ${hi}.`);
+  }
+  if (!d.rates.length || d.rates.length > 20) e.push("Mga rate: 1 hanggang 20.");
+  const seen = new Set();
+  for (const r of d.rates) {
+    if (!(isInt(r.amount) && Number(r.amount) >= 1 && Number(r.amount) <= 10000)) e.push("Bayad ng rate: ₱1 hanggang ₱10,000.");
+    else if (seen.has(Number(r.amount))) e.push(`May dalawang rate na ₱${r.amount}.`); else seen.add(Number(r.amount));
+    if (!(isInt(r.minutes) && Number(r.minutes) >= 1 && Number(r.minutes) <= 100000)) e.push("Oras ng rate: 1 hanggang 100,000 minuto.");
+  }
+  return [...new Set(e)];
+}
+const shown = (k, v) => (typeof v === "boolean" ? (v ? "Oo" : "Hindi") : ((VALUE_LABELS[k] || {})[v] || String(v)));
+function cfgChanges(old, d) {
+  const out = [];
+  for (const [k, label] of SETTING_FIELDS) { const a = (old.settings || {})[k], b = d.settings[k]; if (String(a) !== String(b)) out.push(`${label}: ${shown(k, a)} → ${shown(k, typeof a === "number" ? Number(b) : b)}`); }
+  const ra = JSON.stringify((old.rates || []).map((r) => [r.amount, r.minutes]).sort((x, y) => x[0] - y[0])), rb = JSON.stringify(d.rates.map((r) => [Number(r.amount), Number(r.minutes)]).sort((x, y) => x[0] - y[0]));
+  if (ra !== rb) out.push("Mga rate: " + d.rates.map((r) => ({ a: Number(r.amount), m: Number(r.minutes) })).sort((x, y) => x.a - y.a).map((r) => `₱${r.a} = ${mins(r.m)}`).join(", "));
+  return out;
+}
+async function saveConfig(s) {
+  const st = cfgCache[s.shopId], d = cfgDraft[s.shopId];
+  const errs = cfgErrors(d);
+  if (errs.length) { cfgMsg[s.shopId] = { bad: errs }; draw(); return; }
+  const [r0, cur] = await get(`${STORE}/${docUrl(s.shopId)}/config/main`);
+  if (!r0.ok) { cfgMsg[s.shopId] = { bad: ["Hindi makuha ang kasalukuyang settings mula sa cloud. Subukan ulit."] }; draw(); return; }
+  const now = fromFs({ mapValue: { fields: cur.fields } });
+  if (now.version !== st.cfg.version) {                       // somebody (or the Hub) changed it while this was open: show the new one
+    cfgCache[s.shopId] = { cfg: now, ut: cur.updateTime }; delete cfgDraft[s.shopId];
+    cfgMsg[s.shopId] = { bad: ["May nagbago sa settings habang ine-edit mo. Ipinakita ko ang bago; ulitin ang pagbabago mo."] }; draw(); return;
+  }
+  const lines = cfgChanges(now, d);
+  if (!lines.length) { cfgMsg[s.shopId] = { bad: ["Walang binago."] }; draw(); return; }
+  if (!confirm(`Ibabago sa shop:\n\n${lines.join("\n")}\n\nIpatutupad ito ng Hub sa loob ng mga 1 minuto. Ituloy?`)) return;
+  const settings = {};
+  for (const [k, , kind] of SETTING_FIELDS) { const v = d.settings[k]; settings[k] = kind === "number" ? Number(v) : kind === "text" ? String(v).trim() : v; }
+  const doc = { v: 1, version: now.version + 1, hubId: now.hubId || "", updatedAt: new Date().toISOString(), updatedBy: "dashboard", settings,
+                rates: d.rates.map((r) => ({ amount: Number(r.amount), minutes: Number(r.minutes) })) };
+  const name = `projects/${PROJECT}/databases/(default)/documents/shops/${s.shopId}/config/main`;
+  const [r] = await post(`${STORE}/projects/${PROJECT}/databases/(default)/documents:commit`,
+    JSON.stringify({ writes: [{ update: { name, fields: toFs(doc).mapValue.fields }, currentDocument: { updateTime: cur.updateTime } }] }),
+    { "Content-Type": "application/json", Authorization: "Bearer " + idToken });
+  if (!r.ok) {
+    cfgMsg[s.shopId] = { bad: [r.status === 403 ? "Hindi pinayagan ng cloud. Tingnan kung napa-publish na ang bagong Firestore Rules." : "May nagbago sa settings habang sine-save. Pindutin ang I-refresh at ulitin."] };
+    cfgCache = {}; draw(); return;
+  }
+  fetch(`${RTDB}/cfgwake/${uid}/${s.shopId}.json?auth=${encodeURIComponent(idToken)}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ at: { ".sv": "timestamp" } }) }).catch(() => {});
+  cfgPending[s.shopId] = { v: doc.version, at: Date.now() }; delete cfgDraft[s.shopId]; delete cfgMsg[s.shopId];
+  cfgCache[s.shopId] = { cfg: doc, ut: "" };
+  fastUntil = Date.now() + 90000; draw(); clearTimeout(timer); timer = setTimeout(poll, 2500);
+}
+// The Hub has the new version (its summary says so): the page reads the cloud's copy again, which shows what the Hub really kept.
+function settleConfig() {
+  for (const [shopId, p] of Object.entries(cfgPending)) {
+    const s = shops.find((x) => x.shopId === shopId);
+    if (!s || typeof s.configVersion !== "number" || s.configVersion < p.v) continue;
+    delete cfgPending[shopId]; delete cfgCache[shopId];
+    notice = { text: s.configVersion > p.v ? "Ipinatupad ng Hub ang karamihan, pero may mga halaga na tinanggihan nito. Tingnan ang bagong halaga sa ibaba." : "✓ Naipatupad na ng Hub ang mga pagbabago.", until: Date.now() + 12000 };
+  }
+}
 function settingsBlock(s, branch) {
   const st = cfgCache[s.shopId], title = el("h2", {}, branch ? `Settings at rates: ${branch}` : "Settings at rates");
   if (!st) {
     cfgCache[s.shopId] = { busy: true };
     get(`${STORE}/${docUrl(s.shopId)}/config/main`)
-      .then(([r, d]) => { cfgCache[s.shopId] = r.ok ? { cfg: fromFs({ mapValue: { fields: d.fields } }) } : { error: r.status === 404 ? "none" : "denied" }; })
+      .then(([r, d]) => { cfgCache[s.shopId] = r.ok ? { cfg: fromFs({ mapValue: { fields: d.fields } }), ut: d.updateTime } : { error: r.status === 404 ? "none" : "denied" }; })
       .catch(() => { cfgCache[s.shopId] = { error: "denied" }; })
       .finally(() => { if (section === "settings") draw(); });
     return el("section", { class: "block" }, title, el("p", { class: "empty" }, "Sandali…"));
   }
   if (st.busy) return el("section", { class: "block" }, title, el("p", { class: "empty" }, "Sandali…"));
   if (st.error) return el("section", { class: "block" }, title, el("p", { class: "empty" }, st.error === "none" ? "Wala pang settings sa cloud. Ipapadala ito ng Hub pagkatapos ng ilang minuto." : "Hindi makuha ang settings mula sa cloud. Tingnan ang Firestore Rules."));
-  const c = st.cfg, rates = el("tbody"), sets = el("tbody");
-  for (const r of (c.rates || []).slice().sort((a, b) => a.amount - b.amount)) rates.append(el("tr", {}, el("td", {}, el("b", {}, peso(r.amount))), el("td", { class: "num" }, mins(r.minutes))));
-  if (!(c.rates || []).length) rates.append(el("tr", {}, el("td", { colspan: 2, class: "empty" }, "Walang rate.")));
-  for (const [k, v] of Object.entries(c.settings || {})) sets.append(el("tr", {}, el("td", { style: "white-space:normal" }, SETTING_LABELS[k] || k), el("td", { style: "white-space:normal" }, typeof v === "boolean" ? (v ? "Oo" : "Hindi") : ((VALUE_LABELS[k] || {})[v] || String(v)))));
+  const c = st.cfg, editable = s.cfgEdit === true;
   const at = c.updatedAt ? new Date(c.updatedAt).toLocaleString("fil-PH", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "—";
-  return el("div", { class: "page" }, el("section", { class: "block" }, title,
-      el("p", { class: "empty", style: "margin:0" }, `Bersyon ${c.version} · huling pagbabago: ${at}. Pagtingin lang ito; palitan ang settings sa admin page ng shop.`)),
-    el("div", { class: "two" },
+  const pend = cfgPending[s.shopId], late = pend && Date.now() - pend.at > 90000;
+  const head = el("section", { class: "block" }, title,
+    el("p", { class: "empty", style: "margin:0" }, `Bersyon ${c.version} · huling pagbabago: ${at}. ` + (editable ? "Puwede mong palitan dito; ipatutupad ito ng Hub." : "Pagtingin lang ito.")),
+    ...(editable ? [] : [el("p", { class: "notice warn", style: "margin:10px 0 0" }, "Naka-off ang pag-edit mula sa dashboard. I-on sa admin page ng shop (Settings, Cloud, Pag-edit ng Settings at rates mula sa dashboard).")]),
+    ...(notice && Date.now() < notice.until && !pend ? [el("p", { class: "notice", style: "margin:10px 0 0" }, notice.text)] : []),
+    ...(pend ? [el("p", { class: "notice warn", style: "margin:10px 0 0" }, late ? "Hindi pa naipapatupad ng Hub. Patay ba ito, o walang internet? Ipapatupad ito kapag bumalik." : `Naipadala (bersyon ${pend.v}). Hinihintay ang Hub…`)] : []),
+    ...((cfgMsg[s.shopId] || {}).bad ? [el("div", { class: "notice warn", style: "margin:10px 0 0;font-weight:500", id: "cfgErrors" }, ...cfgMsg[s.shopId].bad.map((m) => el("div", {}, m)))] : []));
+  if (!editable) {                                           // read only: tables
+    const rates = el("tbody"), sets = el("tbody");
+    for (const r of (c.rates || []).slice().sort((a, b) => a.amount - b.amount)) rates.append(el("tr", {}, el("td", {}, el("b", {}, peso(r.amount))), el("td", { class: "num" }, mins(r.minutes))));
+    if (!(c.rates || []).length) rates.append(el("tr", {}, el("td", { colspan: 2, class: "empty" }, "Walang rate.")));
+    for (const [k, v] of Object.entries(c.settings || {})) sets.append(el("tr", {}, el("td", { style: "white-space:normal" }, SETTING_LABELS[k] || k), el("td", { style: "white-space:normal" }, shown(k, v))));
+    return el("div", { class: "page" }, head, el("div", { class: "two" },
       el("section", { class: "block" }, el("h2", {}, "Mga rate"), el("table", {}, el("thead", {}, el("tr", {}, el("th", {}, "Bayad"), el("th", { class: "num" }, "Oras na makukuha"))), rates)),
       el("section", { class: "block", style: "overflow-x:auto" }, el("h2", {}, "Settings"), el("table", {}, el("thead", {}, el("tr", {}, el("th", {}, "Setting"), el("th", {}, "Halaga"))), sets))));
+  }
+  const d = draftOf(s.shopId, c), field = (k, label, kind) => {
+    const id = "cfg_" + k;
+    if (kind === "bool") { const box = el("input", { type: "checkbox", id }); box.checked = !!d.settings[k]; box.onchange = () => { d.settings[k] = box.checked; }; return el("label", { class: "cfgrow check" }, box, el("span", {}, label)); }
+    if (kind === "select") { const sel = el("select", { id }, ...Object.entries(VALUE_LABELS[k]).map(([v, t]) => el("option", { value: v }, t))); sel.value = d.settings[k]; sel.onchange = () => { d.settings[k] = sel.value; }; return el("label", { class: "cfgrow" }, el("span", {}, label), sel); }
+    const inp = el("input", { id, type: kind === "number" ? "number" : "text", value: d.settings[k] ?? "" }); inp.oninput = () => { d.settings[k] = inp.value; };
+    return el("label", { class: "cfgrow" }, el("span", {}, label), inp);
+  };
+  const rateRows = el("div", { class: "raterows" });
+  const drawRates = () => {
+    rateRows.replaceChildren(...d.rates.map((r, i) => {
+      const a = el("input", { type: "number", min: 1, max: 10000, value: r.amount, "aria-label": "Bayad (piso)" }), m = el("input", { type: "number", min: 1, max: 100000, value: r.minutes, "aria-label": "Minuto" });
+      a.oninput = () => { r.amount = a.value; }; m.oninput = () => { r.minutes = m.value; };
+      const del = el("button", { type: "button", class: "btn-no" }, "Alisin"); del.onclick = () => { d.rates.splice(i, 1); drawRates(); };
+      return el("div", { class: "raterow" }, el("span", {}, "₱"), a, el("span", {}, "="), m, el("span", {}, "min"), del);
+    }));
+  };
+  drawRates();
+  const add = el("button", { type: "button", id: "cfgAddRate" }, "Magdagdag ng rate"); add.onclick = () => { if (d.rates.length < 20) { d.rates.push({ amount: "", minutes: "" }); drawRates(); } };
+  const save = el("button", { type: "button", class: "primary", id: "cfgSave" }, "I-save ang mga pagbabago"); save.disabled = !!pend && !late; save.onclick = () => saveConfig(s);
+  const undo = el("button", { type: "button", id: "cfgUndo" }, "Ibalik sa kasalukuyan"); undo.onclick = () => { delete cfgDraft[s.shopId]; delete cfgMsg[s.shopId]; draw(); };
+  return el("div", { class: "page", id: "cfgForm" }, head, el("div", { class: "two" },
+    el("section", { class: "block" }, el("h2", {}, "Mga rate"), rateRows, el("div", { style: "margin-top:10px" }, add),
+      el("p", { class: "empty", style: "margin:8px 0 0" }, "Bayad: ₱1 hanggang ₱10,000. Oras: 1 hanggang 100,000 minuto. Hanggang 20 rate, walang parehong bayad.")),
+    el("section", { class: "block" }, el("h2", {}, "Settings"), el("div", { class: "cfggrid" }, SETTING_FIELDS.map(([k, label, kind]) => field(k, label, kind))))),
+    el("div", { style: "display:flex;gap:8px;flex-wrap:wrap" }, save, undo));
 }
 
 // ----- Benta at ulat: sales per day, week, month and year, with a custom range, a comparison, and the reports -----
@@ -849,7 +977,7 @@ $("#loginForm").addEventListener("submit", async (ev) => {
   catch (e) { $("#loginMsg").textContent = e.message; }
 });
 $("#logout").addEventListener("click", leave);
-$("#refresh").addEventListener("click", () => { logCache = {}; cfgCache = {}; salesCache = {}; salesState = { key: "", data: null, prev: null, busy: false, error: "", note: "" }; load().catch(() => {}); });
+$("#refresh").addEventListener("click", () => { logCache = {}; cfgCache = {}; cfgDraft = {}; cfgMsg = {}; salesCache = {}; salesState = { key: "", data: null, prev: null, busy: false, error: "", note: "" }; load().catch(() => {}); });
 (async () => { if (await resume()) { $("#who").textContent = "naka-login"; open(); } else $("#loginBox").classList.remove("hidden"); })();
 </script>
 </body>
