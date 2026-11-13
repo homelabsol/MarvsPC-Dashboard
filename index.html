@@ -101,7 +101,8 @@ let idToken = null, uid = null, shops = [], current = "all", timer = null, tick 
 // Updates by itself: every 15 seconds while someone is looking at the page, every 2 minutes when nobody
 // touched it for 5 minutes, and not at all while the tab is hidden (every read counts against the free quota).
 for (const ev of ["mousemove", "keydown", "click", "touchstart", "scroll"]) addEventListener(ev, () => { lastActive = Date.now(); }, { passive: true });
-const pollDelay = () => (Date.now() - lastActive < 300000 ? 15000 : 120000);
+let fastUntil = 0, decided = {}, notice = null;      // decided: what the owner pressed and the Hub has not answered yet
+const pollDelay = () => (Date.now() < fastUntil ? 3000 : Date.now() - lastActive < 300000 ? 15000 : 120000);
 async function poll() {
   clearTimeout(timer);
   if (!idToken) return;
@@ -168,6 +169,7 @@ async function load() {
   shops.sort((a, b) => a.shopName.localeCompare(b.shopName));
   await loadAlive();
   fetchedAt = new Date();
+  settleDecisions();
   draw();
 }
 
@@ -255,8 +257,21 @@ async function decideRequest(shopId, req, d, button, row) {
     const r = await fetch(`${RTDB}/decisions/${uid}/${shopId}/${encodeURIComponent(req.id)}.json?auth=${encodeURIComponent(idToken)}`,
       { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ d, at: { ".sv": "timestamp" } }) });
     if (!r.ok) throw new Error("denied");
-    row.querySelector(".act").textContent = "Naipadala sa Hub. Hintayin ang kumpirmasyon…";
+    // Remember it: the summary we are showing is older than the Hub's answer, and it still lists this request.
+    decided[req.id] = { d, at: Date.now(), u: req.u, a: req.a, k: req.k };
+    fastUntil = Date.now() + 45000;                  // look every 3 seconds until the Hub has answered
+    draw(); clearTimeout(timer); timer = setTimeout(poll, 2500);
   } catch (e) { button.disabled = false; alert("Hindi naipadala. Subukan ulit."); }
+}
+// A request we pressed and that is no longer in the list was done by the Hub: say so.
+function settleDecisions() {
+  const present = new Set(shops.flatMap((s) => (s.pendingList || []).map((q) => q.id)));
+  for (const [id, x] of Object.entries(decided)) {
+    if (present.has(id)) continue;
+    delete decided[id];
+    notice = { text: `${x.d === "approve" ? "✓ Naaprubahan" : "✓ Na-reject"} ang ₱${x.a} ni ${x.u}.`, until: Date.now() + 10000 };
+  }
+  if (!Object.keys(decided).length && Date.now() > fastUntil) fastUntil = 0;
 }
 function requestsBlock(s) {
   const list = s.pendingList || [], body = el("tbody");
@@ -264,7 +279,14 @@ function requestsBlock(s) {
     const act = el("td", { class: "act" });
     const row = el("tr", {}, el("td", {}, timeText(q.c)), el("td", {}, el("b", {}, q.u)), el("td", {}, `₱${q.a} (${mins(q.m)})`),
       el("td", {}, q.k === "cash" ? "Cash: ibibigay sa bantay" : `GCash ref ${q.r}`), act);
-    if (s.remote) {
+    const sent = decided[q.id];
+    if (sent) {
+      // Pressed already: do not show the buttons again while the Hub has not answered.
+      const late = Date.now() - sent.at > 60000;
+      act.append(el("span", {}, late ? "Hindi pa sumasagot ang Hub. Patay ba ito, o walang internet? " : `Naipadala (${sent.d === "approve" ? "Approve" : "Reject"}). Hinihintay ang Hub… `));
+      if (late) { const again = el("button", { type: "button", style: "min-height:44px;padding:0 14px;border-radius:8px;border:1px solid #a9b8d0;background:#fff;cursor:pointer" }, "Subukan ulit");
+        again.onclick = () => { delete decided[q.id]; draw(); }; act.append(again); }
+    } else if (s.remote) {
       const ok = el("button", { type: "button", style: "min-height:44px;padding:0 14px;border-radius:8px;border:0;background:#1f9d6a;color:#fff;font-weight:600;cursor:pointer;margin-right:6px" }, q.k === "cash" ? "Natanggap ang cash" : "Approve");
       const no = el("button", { type: "button", style: "min-height:44px;padding:0 14px;border-radius:8px;border:1px solid #c0392b;background:#fff;color:#c0392b;cursor:pointer" }, "Reject");
       ok.onclick = () => decideRequest(s.shopId, q, "approve", ok, row); no.onclick = () => decideRequest(s.shopId, q, "reject", no, row);
@@ -273,7 +295,8 @@ function requestsBlock(s) {
     body.append(row);
   }
   if (!list.length) body.append(el("tr", {}, el("td", { colspan: 5, class: "empty" }, "Walang naghihintay.")));
-  return el("section", { class: "block", style: "overflow-x:auto" }, el("h2", {}, "Mga request na naghihintay"),
+  const done = notice && Date.now() < notice.until ? el("p", { style: "margin:0 0 8px;padding:8px 12px;border-radius:10px;background:#dcfce7;color:#14532d;font-weight:600" }, notice.text) : null;
+  return el("section", { class: "block", style: "overflow-x:auto" }, el("h2", {}, "Mga request na naghihintay"), ...(done ? [done] : []),
     el("p", { class: "empty", style: "margin:0 0 8px" }, s.remote ? "Tingnan muna sa GCash app mo kung pumasok ang bayad at tugma ang reference number bago i-approve."
       : "Naka-off ang pag-approve mula sa phone. I-on sa admin page ng shop (Settings, Cloud)."),
     el("table", {}, el("thead", {}, el("tr", {}, el("th", {}, "Oras"), el("th", {}, "Username"), el("th", {}, "Halaga"), el("th", {}, "Bayad"), el("th", {}, ""))), body));
