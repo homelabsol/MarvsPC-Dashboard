@@ -57,7 +57,25 @@
   .legend i { display:inline-block; width:12px; height:12px; border-radius:3px; margin-right:6px; vertical-align:-1px; }
   .empty { color:var(--muted); }
   .foot { font-size:12.5px; color:var(--muted); }
-  @media (max-width: 800px) { .grid2 { grid-template-columns:minmax(0, 1fr); } main { padding:14px; } }
+  .shell { display:grid; grid-template-columns:220px minmax(0, 1fr); min-height:calc(100vh - 64px); }
+  .side { background:var(--navy); padding:14px 10px; display:flex; flex-direction:column; gap:6px; }
+  .side a { display:flex; align-items:center; gap:12px; padding:11px 14px; border-radius:12px; color:#dbe5f5; text-decoration:none; font-weight:600; min-height:44px; }
+  .side a:hover { background:#1b335a; }
+  .side a[aria-current="page"] { background:var(--sun); color:var(--navy); }
+  .side a svg { flex:0 0 20px; }
+  .badge { margin-left:auto; background:#b91c1c; color:#fff; border-radius:99px; min-width:22px; padding:1px 7px; font-size:12px; text-align:center; }
+  .range { display:flex; flex-wrap:wrap; gap:8px; }
+  .range button[aria-pressed="true"] { background:var(--navy); color:#fff; border-color:var(--navy); }
+  .num { text-align:right; }
+  td.num, th.num { text-align:right; }
+  @media (max-width: 800px) {
+    .grid2 { grid-template-columns:minmax(0, 1fr); } main { padding:14px 14px 90px; }
+    .cards { grid-template-columns:repeat(2, minmax(0, 1fr)); gap:10px; } .card { padding:12px 14px; } .card b { font-size:22px; }
+    .shell { display:block; }
+    .side { position:fixed; left:0; right:0; bottom:0; z-index:5; flex-direction:row; padding:6px; gap:2px; overflow-x:auto; border-top:1px solid #3a5886; }
+    .side a { flex:1 0 76px; flex-direction:column; justify-content:center; gap:3px; font-size:11px; padding:6px 4px; border-radius:10px; text-align:center; position:relative; }
+    .side .badge { position:absolute; top:2px; right:14px; margin:0; }
+  }
 </style>
 </head>
 <body>
@@ -78,11 +96,14 @@
     <div class="logo" aria-hidden="true">MP</div><b>MarvsPC-Piso</b>
     <div class="who"><span id="who"></span><button type="button" id="refresh">I-refresh</button><button type="button" id="logout">Logout</button></div>
   </header>
-  <main>
-    <div class="tabs" id="tabs" role="group" aria-label="Mga shop"></div>
-    <div id="view"></div>
-    <p class="foot" id="foot"></p>
-  </main>
+  <div class="shell">
+    <nav class="side" id="side" aria-label="Mga bahagi ng dashboard"></nav>
+    <main>
+      <div class="tabs" id="tabs" role="group" aria-label="Mga branch"></div>
+      <div id="view"></div>
+      <p class="foot" id="foot"></p>
+    </main>
+  </div>
 </div>
 
 <script>
@@ -273,7 +294,7 @@ function settleDecisions() {
   }
   if (!Object.keys(decided).length && Date.now() > fastUntil) fastUntil = 0;
 }
-function requestsBlock(s) {
+function requestsBlock(s, branch) {
   const list = s.pendingList || [], body = el("tbody");
   for (const q of list) {
     const act = el("td", { class: "act" });
@@ -296,13 +317,13 @@ function requestsBlock(s) {
   }
   if (!list.length) body.append(el("tr", {}, el("td", { colspan: 5, class: "empty" }, "Walang naghihintay.")));
   const done = notice && Date.now() < notice.until ? el("p", { style: "margin:0 0 8px;padding:8px 12px;border-radius:10px;background:#dcfce7;color:#14532d;font-weight:600" }, notice.text) : null;
-  return el("section", { class: "block", style: "overflow-x:auto" }, el("h2", {}, "Mga request na naghihintay"), ...(done ? [done] : []),
+  return el("section", { class: "block", style: "overflow-x:auto" }, el("h2", {}, branch ? `Mga request na naghihintay: ${branch}` : "Mga request na naghihintay"), ...(done ? [done] : []),
     el("p", { class: "empty", style: "margin:0 0 8px" }, s.remote ? "Tingnan muna sa GCash app mo kung pumasok ang bayad at tugma ang reference number bago i-approve."
       : "Naka-off ang pag-approve mula sa phone. I-on sa admin page ng shop (Settings, Cloud)."),
     el("table", {}, el("thead", {}, el("tr", {}, el("th", {}, "Oras"), el("th", {}, "Username"), el("th", {}, "Halaga"), el("th", {}, "Bayad"), el("th", {}, ""))), body));
 }
 function dayText(iso) { return iso ? new Date(iso).toLocaleDateString("fil-PH", { month: "short", day: "numeric" }) : "—"; }
-function accountsBlock(s) {
+function accountsBlock(s, branch) {
   const body = el("tbody");
   const fill = (rows, searching) => {
     body.replaceChildren();
@@ -322,7 +343,7 @@ function accountsBlock(s) {
     catch (e) { msg.textContent = "Hindi makuha ang resulta."; }
   };
   go.onclick = run; q.onkeydown = (ev) => { if (ev.key === "Enter") run(); };
-  return el("section", { class: "block", style: "overflow-x:auto" }, el("h2", {}, "Mga account"),
+  return el("section", { class: "block", style: "overflow-x:auto" }, el("h2", {}, branch ? `Mga account: ${branch}` : "Mga account"),
     el("div", { style: "display:flex;gap:8px;margin:0 0 10px;flex-wrap:wrap" }, q, go),
     el("table", {}, el("thead", {}, el("tr", {}, el("th", {}, "Username"), el("th", {}, "Pangalan"), el("th", {}, "Ginawa"), el("th", {}, "Natitirang oras"))), body), msg,
     el("p", { class: "empty", style: "margin:8px 0 0" }, "Ang huling 30 na ginawa. Ang paghahanap ay kumukuha ng hanggang 20 mula sa cloud."));
@@ -339,6 +360,28 @@ async function searchAccounts(shopId, prefix) {
   if (!r.ok) throw new Error("search");
   return d.filter((x) => x.document).map((x) => { const f = fromFs({ mapValue: { fields: x.document.fields } }); return { u: f.username, n: f.fullName, c: f.createdAt, weak: f.weak }; });
 }
+// ----- The pages (chosen from the menu on the left; the address says which: #/dashboard, #/requests, #/accounts, #/sales) -----
+const SECTIONS = [
+  ["dashboard", "Dashboard", '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>'],
+  ["requests", "Mga request", '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 13l3-8h10l3 8v6H4z"/><path d="M4 13h5l1 2h4l1-2h5"/></svg>'],
+  ["accounts", "Mga account", '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.2"/><path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6"/><circle cx="17.5" cy="9" r="2.5"/><path d="M17 14.2c2.4.3 4 2.3 4 4.8"/></svg>'],
+  ["sales", "Benta", '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>'],
+];
+let section = "dashboard";
+function sectionFromHash() { const k = (location.hash.match(/^#\/(\w+)/) || [])[1]; return SECTIONS.some((s) => s[0] === k) ? k : "dashboard"; }
+function drawSide() {
+  const side = $("#side"); side.replaceChildren();
+  const waiting = current === "all" ? sum((s) => (s.pendingList || []).length) : ((shops.find((s) => s.shopId === current) || {}).pendingList || []).length;
+  for (const [key, label, icon] of SECTIONS) {
+    const a = el("a", { href: "#/" + key }, label);
+    a.insertAdjacentHTML("afterbegin", icon);
+    if (key === section) a.setAttribute("aria-current", "page");
+    if (key === "requests" && waiting) a.append(el("span", { class: "badge" }, waiting));
+    side.append(a);
+  }
+}
+addEventListener("hashchange", () => { section = sectionFromHash(); if (idToken) draw(); });
+
 function oneShop(s) {
   const t = s.today;
   return el("div", { style: "display:grid;gap:18px" },
@@ -346,9 +389,11 @@ function oneShop(s) {
     el("div", { class: "cards" }, card("c-amber", peso(t.consumed), "Kinita ngayon (nagamit na oras)"), card("c-violet", peso(t.income), "Benta / load ngayon"),
       card("c-blue", `${online(s)} / ${s.pcs.length}`, "Online na PC"), card("c-teal", t.accounts, "Customer accounts"), card("c-red", t.pending, "Naghihintay ng approval")),
     chips([[peso(t.cash || 0), "Cash"], [peso(t.gcash || 0), "GCash"], [t.walkins || 0, "Walk-in"]]),
-    el("div", { class: "grid2" }, pcTable(s), chart(s.week)),
-    requestsBlock(s),
-    accountsBlock(s));
+    el("div", { class: "grid2" }, pcTable(s), chart(s.week)));
+}
+function stacked(build, title) {                          // one block for a branch, or one per branch under "Lahat ng branch"
+  if (current !== "all") return build(shops.find((s) => s.shopId === current), null);
+  return el("div", { style: "display:grid;gap:18px" }, shops.map((s) => build(s, s.shopName)));
 }
 function allShops() {
   const body = el("tbody");
@@ -367,15 +412,135 @@ function allShops() {
 function draw() {
   const tabs = $("#tabs"); tabs.replaceChildren();
   const mk = (id, text) => { const b = el("button", { type: "button", "aria-pressed": String(current === id) }, text); b.onclick = () => { current = id; draw(); }; tabs.append(b); };
+  if (!shops.length) $("#side").replaceChildren();
   if (!shops.length) { $("#view").replaceChildren(el("p", { class: "block empty" }, "Wala pang shop na naka-connect. Sa admin page ng shop, Settings, i-connect ang Cloud.")); return; }
   // Tabs are only for an owner with more than one branch. With one branch there is nothing to choose: no tabs at all.
   tabs.classList.toggle("hidden", shops.length < 2);
   if (current !== "all" && !shops.find((s) => s.shopId === current)) current = shops.length > 1 ? "all" : shops[0].shopId;
   if (shops.length === 1) current = shops[0].shopId;
   if (shops.length > 1) { mk("all", "Lahat ng branch"); for (const s of shops) mk(s.shopId, s.shopName); }
-  $("#view").replaceChildren(current === "all" ? allShops() : oneShop(shops.find((s) => s.shopId === current)));
+  section = sectionFromHash();
+  drawSide();
+  const page = section === "requests" ? stacked(requestsBlock) : section === "accounts" ? stacked(accountsBlock)
+    : section === "sales" ? salesView() : current === "all" ? allShops() : oneShop(shops.find((s) => s.shopId === current));
+  $("#view").replaceChildren(page);
   $("#foot").textContent = "Pagtingin lang ito. Hindi magbabago ang shop mula rito. Kusang nag-a-update habang tinitingnan mo ito"
     + (fetchedAt ? ` (huling kuha: ${fetchedAt.toLocaleTimeString("fil-PH", { hour: "numeric", minute: "2-digit", second: "2-digit" })}).` : ".");
+}
+// ----- Benta: sales per day, week, month and year -----
+// Days that are over come from the cloud (one small document per day, sent by the Hub once the day is over, and one per
+// finished month); today comes from the summary the page already has. Reading is bounded: a month is at most 31 reads.
+const RANGES = [["today", "Ngayon"], ["last7", "7 araw"], ["month", "Ngayong buwan"], ["lastmonth", "Nakaraang buwan"], ["year", "Ngayong taon"]];
+let salesRange = "last7", salesCache = {}, salesState = { key: "", rows: {}, busy: false, error: "" };
+const phToday = () => new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Manila" });
+const addDays = (iso, n) => { const d = new Date(iso + "T00:00:00Z"); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
+const monthStart = (iso) => iso.slice(0, 7) + "-01";
+const monthEnd = (iso) => { const d = new Date(monthStart(iso) + "T00:00:00Z"); d.setUTCMonth(d.getUTCMonth() + 1); d.setUTCDate(0); return d.toISOString().slice(0, 10); };
+function rangeOf(key) {
+  const today = phToday();
+  if (key === "today") return { from: today, to: today, by: "day" };
+  if (key === "last7") return { from: addDays(today, -6), to: today, by: "day" };
+  if (key === "month") return { from: monthStart(today), to: today, by: "day" };
+  if (key === "lastmonth") { const e = addDays(monthStart(today), -1); return { from: monthStart(e), to: e, by: "day" }; }
+  return { from: today.slice(0, 4) + "-01-01", to: today, by: "month" };
+}
+async function fetchDocs(shopId, collection, fromKey, toKey) {
+  const parent = `projects/${PROJECT}/databases/(default)/documents/data/${uid}/shops/${shopId}`;
+  const q = { structuredQuery: { from: [{ collectionId: collection }], limit: 400,
+    where: { compositeFilter: { op: "AND", filters: [
+      { fieldFilter: { field: { fieldPath: "__name__" }, op: "GREATER_THAN_OR_EQUAL", value: { referenceValue: `${parent}/${collection}/${fromKey}` } } },
+      { fieldFilter: { field: { fieldPath: "__name__" }, op: "LESS_THAN", value: { referenceValue: `${parent}/${collection}/${toKey}\uf8ff` } } }] } },
+    orderBy: [{ field: { fieldPath: "__name__" }, direction: "ASCENDING" }] } };
+  const [r, d] = await post(`${STORE}/${parent}:runQuery`, JSON.stringify(q), { "Content-Type": "application/json", Authorization: "Bearer " + idToken });
+  if (!r.ok) throw new Error("benta");
+  return d.filter((x) => x.document).map((x) => fromFs({ mapValue: { fields: x.document.fields } }));
+}
+const blank = (date) => ({ date, income: 0, cash: 0, gcash: 0, walkins: 0, loads: 0, minutes: 0, consumed: 0 });
+const addInto = (a, b) => { for (const k of ["income", "cash", "gcash", "walkins", "loads", "minutes", "consumed"]) a[k] = (a[k] || 0) + (b[k] || 0); return a; };
+function todayRow(s) { const t = s.today || {}; return { date: phToday(), income: t.income || 0, cash: t.cash || 0, gcash: t.gcash || 0, walkins: t.walkins || 0, loads: t.loads || 0, minutes: t.minutes || 0, consumed: t.consumed || 0 }; }
+// The finished part of a range for one branch (from the cloud), as rows. Cached: a finished day does not change.
+async function pastRows(shopId, key) {
+  const today = phToday(), ck = `${shopId}|${key}|${today}`;
+  if (salesCache[ck]) return salesCache[ck];
+  const r = rangeOf(key), yesterday = addDays(today, -1);
+  let rows = [];
+  if (r.by === "day") {
+    const to = r.to < yesterday ? r.to : yesterday;
+    if (r.from <= to) rows = await fetchDocs(shopId, "days", r.from, to);
+  } else {                                              // a year: finished months, and this month's finished days as one row
+    rows = await fetchDocs(shopId, "months", r.from.slice(0, 7), addDays(monthStart(today), -1).slice(0, 7));
+    const mdays = monthStart(today) <= yesterday ? await fetchDocs(shopId, "days", monthStart(today), yesterday) : [];
+    if (mdays.length) rows.push(mdays.reduce((a, d) => addInto(a, d), blank(today.slice(0, 7))));
+  }
+  return (salesCache[ck] = rows);
+}
+async function ensureSales() {
+  const key = salesRange + "|" + (current === "all" ? shops.map((s) => s.shopId).join(",") : current);
+  if (salesState.key === key) return;                  // (after an error it waits for the owner to press I-refresh: every try is a read)
+  salesState = { key, rows: {}, busy: true, error: "" };
+  try {
+    for (const s of (current === "all" ? shops : shops.filter((x) => x.shopId === current))) salesState.rows[s.shopId] = await pastRows(s.shopId, salesRange);
+  } catch (e) { salesState.error = "Hindi makuha ang benta mula sa cloud. Subukan ulit (I-refresh)."; }
+  salesState.busy = false;
+  if (section === "sales") draw();
+}
+// All the rows to show: the finished ones of each branch added together, plus today (from the summary).
+function salesRows() {
+  const r = rangeOf(salesRange), today = phToday(), mine = current === "all" ? shops : shops.filter((s) => s.shopId === current), byKey = {};
+  for (const s of mine) for (const row of salesState.rows[s.shopId] || []) addInto(byKey[row.date] = byKey[row.date] || blank(row.date), row);
+  if (r.by === "day") {
+    for (const s of mine) if (r.from <= today && today <= r.to) addInto(byKey[today] = byKey[today] || blank(today), todayRow(s));
+    const out = [];
+    for (let d = r.from; d <= r.to; d = addDays(d, 1)) out.push(byKey[d] || blank(d));
+    return out;
+  }
+  for (const s of mine) addInto(byKey[today.slice(0, 7)] = byKey[today.slice(0, 7)] || blank(today.slice(0, 7)), todayRow(s));
+  const out = [];
+  for (let m = 1; m <= Number(today.slice(5, 7)); m++) { const k = `${today.slice(0, 4)}-${String(m).padStart(2, "0")}`; out.push(byKey[k] || blank(k)); }
+  return out;
+}
+function rowLabel(date, by) {
+  return by === "month" ? new Date(date + "-01T00:00:00").toLocaleDateString("fil-PH", { month: "long" })
+    : new Date(date + "T00:00:00").toLocaleDateString("fil-PH", { month: "short", day: "numeric", weekday: "short" });
+}
+function salesCsv(rows, by) {
+  const q = (v) => `"${String(v).replace(/"/g, '""')}"`;
+  const lines = ["Petsa,Benta,Cash,GCash,Walk-in,Load,Minuto,Kinita"].concat(rows.map((r) => [r.date, r.income, r.cash, r.gcash, r.walkins, r.loads, r.minutes, r.consumed].map(q).join(",")));
+  const a = el("a", { href: URL.createObjectURL(new Blob(["\ufeff" + lines.join("\r\n")], { type: "text/csv;charset=utf-8" })), download: `benta-${salesRange}.csv` });
+  a.click(); URL.revokeObjectURL(a.href);
+}
+function salesView() {
+  ensureSales();
+  const r = rangeOf(salesRange), head = el("div", { class: "range", role: "group", "aria-label": "Saklaw" });
+  for (const [k, label] of RANGES) { const b = el("button", { type: "button", "aria-pressed": String(salesRange === k) }, label); b.onclick = () => { salesRange = k; draw(); }; head.append(b); }
+  if (salesState.busy || salesState.key === "") return el("div", { style: "display:grid;gap:18px" }, head, el("p", { class: "block empty" }, "Sandali…"));
+  if (salesState.error) return el("div", { style: "display:grid;gap:18px" }, head, el("p", { class: "block empty" }, salesState.error));
+  const rows = salesRows(), total = rows.reduce((a, x) => addInto(a, x), blank("")), by = r.by;
+  const max = Math.max(1, ...rows.map((x) => x.income));
+  const bars = el("div", { class: "chart", role: "img", "aria-label": "Benta" }), lbl = el("div", { class: "lbl" });
+  for (const x of rows) {
+    bars.append(el("div", { class: "col" }, Object.assign(el("i"), { style: `height:${Math.round(x.income / max * 100)}%;background:#6d28d9;width:${rows.length > 14 ? 8 : 16}px` }),
+      Object.assign(el("i"), { style: `height:${Math.round(x.consumed / max * 100)}%;background:#b45309;width:${rows.length > 14 ? 8 : 16}px` })));
+    if (rows.length <= 14) lbl.append(el("div", {}, el("b", {}, by === "month" ? rowLabel(x.date, by).slice(0, 3) : new Date(x.date + "T00:00:00").toLocaleDateString("fil-PH", { weekday: "short" })), peso(x.income)));
+  }
+  const body = el("tbody");
+  for (const x of rows) body.append(el("tr", {}, el("td", {}, rowLabel(x.date, by)), el("td", { class: "num" }, peso(x.income)), el("td", { class: "num" }, peso(x.cash)),
+    el("td", { class: "num" }, peso(x.gcash)), el("td", { class: "num" }, x.walkins), el("td", { class: "num" }, x.loads), el("td", { class: "num" }, mins(x.minutes)), el("td", { class: "num" }, peso(x.consumed))));
+  body.append(el("tr", {}, el("td", {}, el("b", {}, "Kabuuan")), ...[peso(total.income), peso(total.cash), peso(total.gcash), total.walkins, total.loads, mins(total.minutes), peso(total.consumed)].map((v) => el("td", { class: "num" }, el("b", {}, v)))));
+  const csv = el("button", { type: "button" }, "I-download (CSV)"); csv.onclick = () => salesCsv(rows, by);
+  const perBranch = current === "all" && shops.length > 1 ? el("section", { class: "block", style: "overflow-x:auto" }, el("h2", {}, "Bawat branch"),
+    el("table", {}, el("thead", {}, el("tr", {}, ["Branch", "Benta", "Cash", "GCash", "Kinita"].map((h, i) => el("th", { class: i ? "num" : "" }, h)))),
+      el("tbody", {}, shops.map((s) => { const t = [...(salesState.rows[s.shopId] || []), ...(r.by === "day" && r.from <= phToday() && phToday() <= r.to || r.by === "month" ? [todayRow(s)] : [])].reduce((a, x) => addInto(a, x), blank(""));
+        return el("tr", {}, el("td", {}, el("b", {}, s.shopName)), el("td", { class: "num" }, peso(t.income)), el("td", { class: "num" }, peso(t.cash)), el("td", { class: "num" }, peso(t.gcash)), el("td", { class: "num" }, peso(t.consumed))); })))) : null;
+  return el("div", { style: "display:grid;gap:18px" }, head,
+    el("div", { class: "cards" }, card("c-violet", peso(total.income), "Benta / load"), card("c-teal", peso(total.cash), "Cash"), card("c-blue", peso(total.gcash), "GCash"),
+      card("c-amber", peso(total.consumed), "Kinita (nagamit na oras)"), card("c-red", `${total.walkins} walk-in · ${total.loads} load`, "Mga load")),
+    el("section", { class: "block" }, el("h2", {}, by === "month" ? "Benta bawat buwan" : "Benta bawat araw"),
+      el("div", { class: "legend" }, el("span", {}, el("i", { style: "background:#6d28d9" }), "Benta / load"), el("span", {}, el("i", { style: "background:#b45309" }), "Kinita (nagamit)")), bars, lbl),
+    el("section", { class: "block", style: "overflow-x:auto" }, el("div", { style: "display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap" }, el("h2", { style: "margin:0" }, "Talaan"), csv),
+      el("table", {}, el("thead", {}, el("tr", {}, ["Petsa", "Benta", "Cash", "GCash", "Walk-in", "Load", "Oras na nagamit", "Kinita"].map((h, i) => el("th", { class: i ? "num" : "" }, h)))), body),
+      el("p", { class: "empty", style: "margin:8px 0 0" }, "Ang mga araw na tapos na ay galing sa cloud; ang ngayon ay galing sa buod. May detalyeng bawat araw hanggang 90 araw; ang mas luma ay buwan-buwan.")),
+    ...(perBranch ? [perBranch] : []));
 }
 function tickClocks() {
   document.querySelectorAll("[data-ends]").forEach((td) => { const e = Number(td.dataset.ends); if (e) td.textContent = clock(e - Date.now() / 1000); });
@@ -395,7 +560,7 @@ $("#loginForm").addEventListener("submit", async (ev) => {
   catch (e) { $("#loginMsg").textContent = e.message; }
 });
 $("#logout").addEventListener("click", leave);
-$("#refresh").addEventListener("click", () => load().catch(() => {}));
+$("#refresh").addEventListener("click", () => { salesCache = {}; salesState = { key: "", rows: {}, busy: false, error: "" }; load().catch(() => {}); });
 (async () => { if (await resume()) { $("#who").textContent = "naka-login"; open(); } else $("#loginBox").classList.remove("hidden"); })();
 </script>
 </body>
