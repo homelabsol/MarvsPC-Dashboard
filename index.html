@@ -132,13 +132,25 @@
   .split { display:flex; height:26px; border-radius:8px; overflow:hidden; margin:10px 0 8px; background:#e6ecf5; } .split span { display:block; }
   .legend2 { display:flex; flex-wrap:wrap; gap:18px; font-size:13px; color:var(--muted); } .legend2 i { display:inline-block; width:10px; height:10px; border-radius:3px; margin-right:6px; }
   .notice.warn { background:var(--warnbg); color:var(--warn); }
-  .printhead { display:none; }
+  .printreport { display:none; }
   @media (max-width: 900px) { .top3, .two { grid-template-columns:minmax(0, 1fr); } }
+  @page { size: A4; margin: 14mm; }
   @media print {
     body { background:#fff; } .top, .side, .tabs, .range, .fields, .pagehead .actions, .foot, .toolbar, button { display:none !important; }
     .shell { display:block; } main { padding:0; max-width:none; }
-    .block, .kpi { box-shadow:none; break-inside:avoid; } .printhead { display:flex; justify-content:space-between; gap:12px; font-size:16px; border-bottom:2px solid #10233f; padding-bottom:8px; }
+    .block, .kpi { box-shadow:none; break-inside:avoid; }
     .pagehead h1 { font-size:20px; }
+    .page:has(> .printreport) > *:not(.printreport) { display:none !important; }
+    .printreport { display:block; color:#10233f; font-size:12px; }
+    .printreport .ph { display:flex; justify-content:space-between; align-items:flex-end; border-bottom:2px solid #10233f; padding-bottom:8px; }
+    .printreport .ph .shop { font-size:22px; font-weight:700; } .printreport .ph .sub { color:#5a6b85; } .printreport .ph .rng { text-align:right; font-size:13px; line-height:1.5; }
+    .printreport .pk { display:grid; grid-template-columns:repeat(4, 1fr); gap:8px; margin:14px 0; } .printreport .pk div { border:1px solid #cfd6e2; border-radius:6px; padding:8px 10px; }
+    .printreport .pk span { display:block; color:#5a6b85; font-size:11px; } .printreport .pk b { font-size:17px; }
+    .printreport h2 { font-size:13px; margin:16px 0 6px; break-after:avoid; }
+    .printreport table { width:100%; border-collapse:collapse; } .printreport th { text-align:left; background:#eef1f6; font-size:11px; padding:5px 6px; border-bottom:1px solid #cfd6e2; }
+    .printreport td { padding:5px 6px; border-bottom:1px solid #e5e9f0; } .printreport .num { text-align:right; } .printreport tr { break-inside:avoid; } .printreport thead { display:table-header-group; }
+    .printreport tr.walk td { color:#5a6b85; font-style:italic; } .printreport tr.tot td { font-weight:700; border-top:2px solid #10233f; background:#f7f8fb; }
+    .printreport .pf { margin-top:14px; border-top:1px solid #cfd6e2; padding-top:6px; color:#5a6b85; font-size:10px; }
   }
   .cfggrid { display:grid; gap:12px; }
   .cfgrow { display:grid; grid-template-columns:minmax(0, 1fr) minmax(0, 1fr); gap:10px; align-items:center; font-size:14px; }
@@ -842,7 +854,8 @@ async function fetchDocs(shopId, collection, fromKey, toKey) {
 }
 // A row is one day (or month): the money, and the details (PCs, the pesos of each hour, who loaded).
 const NUMS = ["income", "cash", "gcash", "walkins", "loads", "minutes", "consumed"];
-const blank = (date) => ({ date, income: 0, cash: 0, gcash: 0, walkins: 0, loads: 0, minutes: 0, consumed: 0, pcs: [], hours: new Array(24).fill(0), staff: [] });
+const blank = (date) => ({ date, income: 0, cash: 0, gcash: 0, walkins: 0, loads: 0, minutes: 0, consumed: 0, pcs: [], hours: new Array(24).fill(0), staff: [], acc: [], walk: { l: 0, c: 0, g: 0, m: 0 }, more: { k: 0, l: 0, c: 0, g: 0, m: 0 } });
+const sumKeys = (a, b, keys) => { const t = { ...a }; for (const k of keys) t[k] = (t[k] || 0) + ((b || {})[k] || 0); return t; };
 function mergeList(a, b, keys) {
   const m = new Map(a.map((x) => [x.n, { ...x }]));
   for (const x of b) { const t = m.get(x.n) || { n: x.n, ...Object.fromEntries(keys.map((k) => [k, 0])) }; for (const k of keys) t[k] = (t[k] || 0) + (x[k] || 0); m.set(x.n, t); }
@@ -851,12 +864,14 @@ function mergeList(a, b, keys) {
 function addInto(a, b) {
   for (const k of NUMS) a[k] = (a[k] || 0) + (b[k] || 0);
   a.pcs = mergeList(a.pcs || [], b.pcs || [], ["s", "m", "c"]); a.staff = mergeList(a.staff || [], b.staff || [], ["c", "g", "l"]);
+  a.acc = mergeList(a.acc || [], b.acc || [], ["l", "c", "g", "m"]);
+  a.walk = sumKeys(a.walk || {}, b.walk, ["l", "c", "g", "m"]); a.more = sumKeys(a.more || {}, b.more, ["k", "l", "c", "g", "m"]);
   a.hours = (a.hours || new Array(24).fill(0)).map((v, i) => v + ((b.hours || [])[i] || 0));
   return a;
 }
-const norm = (d) => Object.assign(blank(d.date), d, { pcs: d.pcs || [], staff: d.staff || [], hours: d.hours && d.hours.length === 24 ? d.hours : new Array(24).fill(0) });
+const norm = (d) => Object.assign(blank(d.date), d, { pcs: d.pcs || [], staff: d.staff || [], acc: d.acc || [], walk: d.walk || blank("").walk, more: d.more || blank("").more, hours: d.hours && d.hours.length === 24 ? d.hours : new Array(24).fill(0) });
 function todayRow(s) { return (s.members || [s]).reduce((a, m) => addInto(a, todayRowOf(m)), blank(phToday())); }
-function todayRowOf(s) { const t = s.today || {}, x = s.todayDetail || {}; return norm({ date: phToday(), income: t.income || 0, cash: t.cash || 0, gcash: t.gcash || 0, walkins: t.walkins || 0, loads: t.loads || 0, minutes: t.minutes || 0, consumed: t.consumed || 0, pcs: x.pcs, hours: x.hours, staff: x.staff }); }
+function todayRowOf(s) { const t = s.today || {}, x = s.todayDetail || {}; return norm({ date: phToday(), income: t.income || 0, cash: t.cash || 0, gcash: t.gcash || 0, walkins: t.walkins || 0, loads: t.loads || 0, minutes: t.minutes || 0, consumed: t.consumed || 0, pcs: x.pcs, hours: x.hours, staff: x.staff, acc: x.acc, walk: x.walk, more: x.more }); }
 const withBranch = (rows, s) => (current === "all" && shops.length > 1)
   ? rows.map((r) => ({ ...r, pcs: (r.pcs || []).map((p) => ({ ...p, n: `${s.shopName} · ${p.n}` })) })) : rows;
 // The rows of a range for one branch: the finished part from the cloud (cached: a finished day does not change), plus today.
@@ -950,6 +965,36 @@ function periodText(r) {
   const f = (iso) => new Date(iso + "T00:00:00").toLocaleDateString("fil-PH", { month: "short", day: "numeric", year: "numeric" });
   return r.by === "month" ? `Enero hanggang ${monthName(r.to.slice(0, 7), true)} ${r.to.slice(0, 4)}` : r.from === r.to ? f(r.from) : `${f(r.from)} hanggang ${f(r.to)}`;
 }
+// The printed report: the period, the money (cash, GCash, walk-in), each day and each account.
+function printReport(shopName, r, by, group, rows, total) {
+  const T = (cols, body) => el("table", {}, el("thead", {}, el("tr", {}, cols.map((h, i) => el("th", { class: i ? "num" : "" }, h)))), body);
+  const td = (v, bold) => el("td", { class: "num" }, bold ? el("b", {}, v) : v);
+  const days = by === "month" ? 0 : Math.round((new Date(r.to + "T00:00:00") - new Date(r.from + "T00:00:00")) / 864e5) + 1;
+  const rangeLine = by === "month" ? "Buwan-buwan" : days === 1 ? "Isang araw lang" : `${days} araw${group === "day" ? " · hatiin bawat araw" : group === "week" ? " · hatiin bawat linggo" : " · hatiin bawat buwan"}`;
+  const kp = el("div", { class: "pk" }, ...[["Kabuuang benta", peso(total.income)], ["Cash", peso(total.cash)], ["GCash", peso(total.gcash)], ["Walk-in", `${total.walkins} beses`]].map(([k, v]) => el("div", {}, el("span", {}, k), el("b", {}, v))));
+  const part = [];
+  if (by === "month" || days > 1) {
+    const b = el("tbody");
+    for (const x of rows) b.append(el("tr", {}, el("td", {}, rowLabel(x.date, by, group)), td(x.loads - x.walkins), td(x.walkins), td(peso(x.cash)), td(peso(x.gcash)), td(peso(x.income), true)));
+    b.append(el("tr", { class: "tot" }, el("td", {}, "Kabuuan"), td(total.loads - total.walkins), td(total.walkins), td(peso(total.cash)), td(peso(total.gcash)), td(peso(total.income))));
+    part.push(el("h2", {}, by === "month" || group === "month" ? "Benta bawat buwan" : group === "week" ? "Benta bawat linggo" : "Benta bawat araw"), T(["Petsa", "Top up", "Walk-in", "Cash", "GCash", "Kabuuan"], b));
+  }
+  const list = [...total.acc].sort((a, b) => (b.c + b.g) - (a.c + a.g) || b.m - a.m || a.n.localeCompare(b.n)), w = total.walk, mo = total.more;
+  const ab = el("tbody");
+  for (const x of list) ab.append(el("tr", {}, el("td", {}, el("b", {}, x.n)), td(x.l), td(peso(x.c)), td(peso(x.g)), td(peso(x.c + x.g), true), td(x.m ? mins(x.m) : "—")));
+  if (mo.k) ab.append(el("tr", { class: "walk" }, el("td", {}, `Iba pa (${mo.k} account)`), td(mo.l), td(peso(mo.c)), td(peso(mo.g)), td(peso(mo.c + mo.g), true), td(mo.m ? mins(mo.m) : "—")));
+  if (w.l || w.c || w.g || w.m) ab.append(el("tr", { class: "walk" }, el("td", {}, `Walk-in (${w.l} beses, walang account)`), td("—"), td(peso(w.c)), td(peso(w.g)), td(peso(w.c + w.g), true), td(w.m ? mins(w.m) : "—")));
+  const sum = (k) => list.reduce((n, x) => n + x[k], 0) + w[k] + mo[k];
+  ab.append(el("tr", { class: "tot" }, el("td", {}, "Kabuuan"), td(sum("l") - w.l), td(peso(sum("c"))), td(peso(sum("g"))), td(peso(sum("c") + sum("g"))), td("")));
+  if (!list.length && !w.c && !w.g && !mo.k) ab.prepend(el("tr", {}, el("td", { colspan: 6, class: "empty" }, "Wala pang datos ng account sa panahong ito.")));
+  const missing = total.income - (sum("c") + sum("g"));
+  const made = new Date().toLocaleString("fil-PH", { timeZone: "Asia/Manila", dateStyle: "medium", timeStyle: "short" });
+  return el("div", { class: "printreport", id: "printReport" },
+    el("div", { class: "ph" }, el("div", {}, el("div", { class: "shop" }, shopName || "MarvsPC-Piso"), el("div", { class: "sub" }, "Ulat ng Benta")), el("div", { class: "rng" }, el("b", {}, periodText(r)), el("br"), rangeLine)),
+    kp, ...part, el("h2", {}, "Bawat account (nag-top up o naglaro)"), T(["Account", "Beses nag-top up", "Cash", "GCash", "Kabuuang top up", "Oras na nagamit"], ab),
+    ...(missing > 0 ? [el("p", { class: "pf" }, `May ${peso(missing)} na walang account sa listahan (mga araw na wala pang detalye ng account).`)] : []),
+    el("div", { class: "pf" }, `Binuo: ${made} · Para lang sa owner`));
+}
 function salesCsv(rows, r, group) {
   const q = (v) => `"${String(v).replace(/"/g, '""')}"`;
   const lines = ["Petsa,Benta,Cash,GCash,Walk-in,Load,Minuto,Kinita"].concat(rows.map((x) => [x.date, x.income, x.cash, x.gcash, x.walkins, x.loads, x.minutes, x.consumed].map(q).join(",")));
@@ -1036,8 +1081,11 @@ function salesView() {
       const rs = [...(sd ? sd.rows : []), ...(r.by === "day" && r.from <= today && today <= r.to || r.by === "month" ? [todayRow(s)] : [])].reduce((a, x) => addInto(a, x), blank(""));
       return el("tr", {}, el("td", {}, el("b", {}, s.shopName)), el("td", { class: "num" }, peso(rs.income)), el("td", { class: "num" }, peso(rs.cash)), el("td", { class: "num" }, peso(rs.gcash)), el("td", { class: "num" }, peso(rs.consumed))); })))) : null;
   const shopName = current === "all" ? "Lahat ng branch" : (shops.find((x) => x.shopId === current) || {}).shopName || "";
+  const accBody = el("tbody");
+  for (const x of [...total.acc].sort((a, b) => (b.c + b.g) - (a.c + a.g) || b.m - a.m || a.n.localeCompare(b.n))) accBody.append(el("tr", {}, el("td", {}, el("b", {}, x.n)), el("td", { class: "num" }, x.l), el("td", { class: "num" }, peso(x.c)), el("td", { class: "num" }, peso(x.g)), el("td", { class: "num" }, el("b", {}, peso(x.c + x.g))), el("td", { class: "num" }, x.m ? mins(x.m) : "—")));
+  if (total.more.k) accBody.append(el("tr", {}, el("td", {}, `Iba pa (${total.more.k} account)`), el("td", { class: "num" }, total.more.l), el("td", { class: "num" }, peso(total.more.c)), el("td", { class: "num" }, peso(total.more.g)), el("td", { class: "num" }, peso(total.more.c + total.more.g)), el("td", { class: "num" }, mins(total.more.m))));
+  if (!total.acc.length) accBody.append(el("tr", {}, el("td", { colspan: 6, class: "empty" }, "Wala pang datos ng account. Lalabas ito pagkatapos ma-upload ng Hub ang bagong ulat (Settings, Cloud).")));
   return el("div", { class: "page" }, ...head,
-    el("div", { class: "printhead" }, el("b", {}, `${shopName} · Benta at ulat`), el("span", {}, periodText(r))),
     ...(st.data.partial ? [el("p", { class: "notice warn" }, `Hanggang ${MAX_DAYS} araw lang ang detalye bawat araw. Ang mas luma ay wala sa talaan; piliin ang Ngayong taon para sa buwan-buwan.`)] : []),
     tiles,
     el("div", { class: "top3" },
@@ -1052,9 +1100,11 @@ function salesView() {
     el("div", { class: cmp ? "two" : "page" },
       el("section", { class: "block", style: "overflow-x:auto" }, el("h2", {}, "Bawat PC"), table(["PC", "Sessions", "Oras na nagamit", "Kinita"], pcBody, "salesPcs")), ...(cmp ? [cmp] : [])),
     ...(perBranch ? [perBranch] : []),
+    el("section", { class: "block", style: "overflow-x:auto" }, el("h2", {}, "Bawat account (nag-top up o naglaro)"), table(["Account", "Beses nag-top up", "Cash", "GCash", "Kabuuang top up", "Oras na nagamit"], accBody, "salesAccounts")),
     el("section", { class: "block", style: "overflow-x:auto" }, el("h2", {}, by === "month" || group === "month" ? "Talaan bawat buwan" : group === "week" ? "Talaan bawat linggo" : "Talaan bawat araw"),
       table(["Petsa", "Benta", "Cash", "GCash", "Walk-in", "Load", "Oras na nagamit", "Kinita"], body, "salesTable"),
-      el("p", { class: "empty", style: "margin:8px 0 0" }, "Ang mga araw na tapos na ay galing sa cloud; ang ngayon ay galing sa buod. May detalyeng bawat araw hanggang 90 araw; ang mas luma ay buwan-buwan. Ang Bawat bantay ay para sa pagsusuri ng cash; walang pangalan ng customer sa cloud.")));
+      el("p", { class: "empty", style: "margin:8px 0 0" }, "Ang mga araw na tapos na ay galing sa cloud; ang ngayon ay galing sa buod. May detalyeng bawat araw hanggang 90 araw; ang mas luma ay buwan-buwan. Ang Bawat bantay ay para sa pagsusuri ng cash. Sa Bawat account, username lang ang nasa cloud (walang buong pangalan o phone); ang Walk-in ay walang pangalan.")),
+    printReport(shopName, r, by, group, rows, total));         // last: on screen it is hidden, on paper it is the only thing shown
 }
 function tickClocks() {
   document.querySelectorAll("[data-ends]").forEach((td) => { const e = Number(td.dataset.ends); if (e) td.textContent = clock(e - Date.now() / 1000); });
