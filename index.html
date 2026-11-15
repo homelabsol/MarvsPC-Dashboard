@@ -39,6 +39,10 @@
   .side a:hover { background:rgba(255,255,255,.07); color:#fff; }
   .side a[aria-current="page"] { background:var(--gold); color:var(--navy); }
   .side a svg { flex:0 0 20px; }
+  .side .shopid { margin-top:auto; padding:10px 8px 2px; font-size:11px; color:#8fa3c4; line-height:1.5; word-break:break-all; }
+  .side .shopid b { display:block; color:#c5d2e8; font-weight:600; }
+  .side .shopid code { font-family:ui-monospace,Consolas,monospace; color:#fff; user-select:all; }
+  .side .shopid button { margin-left:6px; padding:1px 7px; font-size:11px; border-radius:6px; border:1px solid #3a5585; background:transparent; color:#c5d2e8; cursor:pointer; }
   .badge { margin-left:auto; background:#dc2626; color:#fff; border-radius:99px; min-width:22px; padding:1px 7px; font-size:12px; text-align:center; }
   main { padding:26px 30px 48px; max-width:1360px; width:100%; display:grid; gap:16px; align-content:start; }
   .page { display:grid; gap:16px; }
@@ -106,6 +110,7 @@
     .side { position:fixed; left:0; right:0; bottom:0; z-index:5; flex-direction:row; padding:6px; gap:2px; overflow-x:auto; border-top:1px solid #2a4570; }
     .side a { flex:1 0 76px; flex-direction:column; justify-content:center; gap:3px; font-size:11px; padding:6px 4px; border-radius:10px; text-align:center; position:relative; min-height:52px; }
     .side .badge { position:absolute; top:2px; right:14px; margin:0; }
+    .side .shopid { display:none; }
     .kpi { padding:12px 14px; min-height:84px; } .kpi b { font-size:22px; } .kpi .ki { display:none; }
   }
 
@@ -307,7 +312,8 @@ function joinHubs(id, ms) {
     shopId: id, shopName: ms[0].shopName, members: ms, updatedAt: ms.map((m) => m.updatedAt).sort().pop(),
     today: { income: t("income"), consumed: Math.round(t("consumed") * 100) / 100, cash: t("cash"), gcash: t("gcash"), walkins: t("walkins"), loads: t("loads"),
              minutes: t("minutes"), pending: t("pending"), accounts: Math.max(0, ...ms.map((m) => (m.today || {}).accounts || 0)) },   // the accounts are one set for the shop: the biggest count, not the sum
-    pcs: ms.flatMap((m) => m.pcs || []).sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true })),
+    pcs: namedApart(ms.flatMap((m) => { const down = !hubState(m).ok; return (m.pcs || []).map((p) => ({ ...p, status: down ? "offline" : p.status, _hub: m.hubId || m.shopId })); }))   // a PC of a Hub that is gone is not online
+           .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true })),
     week: Object.values(week).sort((a, b) => a.date.localeCompare(b.date)),
     recent: (ms.length > 1 ? [...recent.values()].sort((a, b) => String(b.c).localeCompare(String(a.c))) : [...recent.values()]).slice(0, 30),
     pendingList: ms.flatMap((m) => (m.pendingList || []).map((q) => ({ ...q, _shop: m.shopId }))).sort((a, b) => (ms.length > 1 ? String(a.c).localeCompare(String(b.c)) : 0)),
@@ -315,6 +321,12 @@ function joinHubs(id, ms) {
     weakCount: Math.max(0, ...ms.map((m) => m.weakCount || 0)),
     configVersion: versions.length === ms.length ? Math.min(...versions) : undefined,                  // every Hub must have the new setup before it counts as done
   };
+}
+// Two PCs with the same name (two Hubs numbered them the same): show which Hub each is on, so they are not mistaken for one.
+function namedApart(pcs) {
+  const count = {};
+  for (const p of pcs) count[p.name] = (count[p.name] || 0) + 1;
+  return pcs.map((p) => (count[p.name] > 1 ? { ...p, name: `${p.name} (Hub …${String(p._hub).slice(-4)})` } : p));
 }
 const hubNames = (m) => (m.pcs || []).map((p) => p.name).join(", ") || m.hubId || m.shopId;
 function hubState(m) {
@@ -510,6 +522,17 @@ function drawSide() {
     if (key === section) a.setAttribute("aria-current", "page");
     if (key === "requests" && waiting) a.append(el("span", { class: "badge" }, waiting));
     side.append(a);
+  }
+  // The Shop ID (small, at the bottom of the menu): what is typed in the installer of a new PC of this shop.
+  const ids = current === "all" ? shops : shops.filter((x) => x.shopId === current);
+  if (ids.length) {
+    const box = el("div", { class: "shopid" }, el("b", {}, "Shop ID"));
+    for (const x of ids) {
+      const copy = el("button", { type: "button", "aria-label": "Kopyahin ang Shop ID" }, "Kopyahin");
+      copy.onclick = async () => { try { await navigator.clipboard.writeText(x.shopId); copy.textContent = "Nakopya"; } catch (e) { copy.textContent = "Piliin at Ctrl+C"; } setTimeout(() => { copy.textContent = "Kopyahin"; }, 2000); };
+      box.append(el("div", {}, ...(ids.length > 1 ? [x.shopName + ": "] : []), el("code", {}, x.shopId), copy));
+    }
+    side.append(box);
   }
 }
 addEventListener("hashchange", () => { section = sectionFromHash(); if (idToken) draw(); });
