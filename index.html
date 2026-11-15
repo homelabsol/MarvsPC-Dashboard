@@ -257,9 +257,10 @@ async function load() {
   if (r.status === 401) return leave();
   if (r.status === 403) { $("#view").replaceChildren(el("p", { class: "block" }, "Hindi pa naka-activate ang account na ito. Sabihin sa MarvsPC na idagdag ito.")); return; }
   if (!r.ok) throw new Error("Hindi makuha ang data.");
-  shops = d.filter((x) => x.document).map((x) => fromFs({ mapValue: { fields: x.document.fields } }));
-  shops.sort((a, b) => a.shopName.localeCompare(b.shopName));
+  const docs = d.filter((x) => x.document).map((x) => fromFs({ mapValue: { fields: x.document.fields } }));
   await loadAlive();
+  shops = groupShops(docs);
+  shops.sort((a, b) => a.shopName.localeCompare(b.shopName));
   fetchedAt = new Date();
   settleDecisions();
   settleConfig();
@@ -285,6 +286,43 @@ async function loadAlive() {
     }
   } catch (e) { alive = {}; }
 }
+// ---- One shop, many PCs: every Hub (every PC that keeps its own data) sends its own summary. The summaries that name
+// the same groupId are ONE shop here: the numbers are added, the PCs listed together, the waiting requests together. The
+// pieces keep their own Hub (s.members) because the notes to a Hub (Approve, new settings) go to that Hub, and the
+// sales and the log are kept per Hub in the cloud. A Hub that sends no groupId (older program) is a shop of its own.
+function groupShops(docs) {
+  const by = new Map();
+  for (const d of docs) { const g = d.groupId || d.shopId; if (!by.has(g)) by.set(g, []); by.get(g).push(d); }
+  return [...by].map(([id, ms]) => joinHubs(id, ms));
+}
+function joinHubs(id, ms) {
+  ms = ms.slice().sort((a, b) => (a.shopId === id ? 0 : 1) - (b.shopId === id ? 0 : 1) || a.shopId.localeCompare(b.shopId));
+  const t = (k) => ms.reduce((n, m) => n + ((m.today || {})[k] || 0), 0);
+  const week = {};
+  for (const m of ms) for (const d of m.week || []) { const w = week[d.date] = week[d.date] || { date: d.date, benta: 0, kinita: 0 }; w.benta += d.benta; w.kinita += d.kinita; }
+  const recent = new Map();
+  for (const m of ms) for (const a of m.recent || []) if (!recent.has(a.u)) recent.set(a.u, a);
+  const versions = ms.map((m) => m.configVersion).filter((v) => typeof v === "number");
+  return {
+    shopId: id, shopName: ms[0].shopName, members: ms, updatedAt: ms.map((m) => m.updatedAt).sort().pop(),
+    today: { income: t("income"), consumed: Math.round(t("consumed") * 100) / 100, cash: t("cash"), gcash: t("gcash"), walkins: t("walkins"), loads: t("loads"),
+             minutes: t("minutes"), pending: t("pending"), accounts: Math.max(0, ...ms.map((m) => (m.today || {}).accounts || 0)) },   // the accounts are one set for the shop: the biggest count, not the sum
+    pcs: ms.flatMap((m) => m.pcs || []).sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true })),
+    week: Object.values(week).sort((a, b) => a.date.localeCompare(b.date)),
+    recent: (ms.length > 1 ? [...recent.values()].sort((a, b) => String(b.c).localeCompare(String(a.c))) : [...recent.values()]).slice(0, 30),
+    pendingList: ms.flatMap((m) => (m.pendingList || []).map((q) => ({ ...q, _shop: m.shopId }))).sort((a, b) => (ms.length > 1 ? String(a.c).localeCompare(String(b.c)) : 0)),
+    remote: ms.every((m) => m.remote === true), cfgEdit: ms.every((m) => m.cfgEdit === true),
+    weakCount: Math.max(0, ...ms.map((m) => m.weakCount || 0)),
+    configVersion: versions.length === ms.length ? Math.min(...versions) : undefined,                  // every Hub must have the new setup before it counts as done
+  };
+}
+const hubNames = (m) => (m.pcs || []).map((p) => p.name).join(", ") || m.hubId || m.shopId;
+function hubState(m) {
+  const info = liveInfo(m);
+  if (info) return { ok: info.ok, at: info.at, signal: true };
+  const at = Date.parse(m.updatedAt);
+  return { ok: (Date.now() - at) / 60000 <= 15, at, signal: false };
+}
 function liveInfo(s) {
   const a = alive[s.shopId];
   if (!a || typeof a.at !== "number") return null;                              // no signal (yet): use the Firestore update time
@@ -295,16 +333,16 @@ function liveInfo(s) {
   return { ok: now - sn.local < ALIVE_MS, at: a.at };                           // this device's clock is behind
 }
 function liveness(s) {
-  const info = liveInfo(s);
-  if (info) {
-    const t = new Date(info.at).toLocaleTimeString("fil-PH", { hour: "numeric", minute: "2-digit", second: "2-digit" });
-    return info.ok ? el("span", { class: "live ok" }, el("i"), `Buhay · huling hudyat ${t}`)
-                   : el("span", { class: "live stale" }, el("i"), `Hindi nakakonekta ang Hub · huling hudyat ${t}`);
+  const hubs = s.members || [s], st = hubs.map(hubState), bad = hubs.filter((_, i) => !st[i].ok);
+  const last = Math.max(...st.map((x) => x.at));
+  const t = new Date(last).toLocaleTimeString("fil-PH", { hour: "numeric", minute: "2-digit", second: st.every((x) => x.signal) ? "2-digit" : undefined });
+  const what = st.every((x) => x.signal) ? "hudyat" : "update";
+  if (hubs.length > 1) {
+    return bad.length ? el("span", { class: "live stale" }, el("i"), `Hindi nakakonekta ang Hub ng ${bad.map(hubNames).join(" at ")} · huling ${what} ${t}`)
+                      : el("span", { class: "live ok" }, el("i"), `Buhay ang lahat ng Hub · huling ${what} ${t}`);
   }
-  const ageMin = (Date.now() - Date.parse(s.updatedAt)) / 60000;
-  const at = new Date(s.updatedAt).toLocaleTimeString("fil-PH", { hour: "numeric", minute: "2-digit" });
-  return ageMin > 15 ? el("span", { class: "live stale" }, el("i"), `Hindi nakakonekta ang Hub · huling update ${at}`)
-                     : el("span", { class: "live ok" }, el("i"), `Buhay · huling update ${at}`);
+  return bad.length ? el("span", { class: "live stale" }, el("i"), `Hindi nakakonekta ang Hub · huling ${what} ${t}`)
+                    : el("span", { class: "live ok" }, el("i"), `Buhay · huling ${what} ${t}`);
 }
 function sum(f) { return shops.reduce((n, s) => n + f(s), 0); }
 const ICON = {
@@ -400,7 +438,7 @@ function requestsBlock(s, branch) {
     } else if (s.remote) {
       const ok = el("button", { type: "button", class: "btn-ok", style: "margin-right:6px" }, q.k === "cash" ? "Natanggap ang cash" : "Approve");
       const no = el("button", { type: "button", class: "btn-no" }, "Reject");
-      ok.onclick = () => decideRequest(s.shopId, q, "approve", ok, row); no.onclick = () => decideRequest(s.shopId, q, "reject", no, row);
+      ok.onclick = () => decideRequest(q._shop || s.shopId, q, "approve", ok, row); no.onclick = () => decideRequest(q._shop || s.shopId, q, "reject", no, row);
       act.append(ok, no);
     }
     body.append(row);
@@ -563,11 +601,12 @@ function logBlock(s, branch) {
   const title = el("h2", {}, branch ? `Log: ${branch}` : "Log");
   if (!st) {
     logCache[s.shopId] = { busy: true };
-    Promise.all([newest(s.shopId, "events", "at", 50), newest(s.shopId, "anchors", "lastId", 1), journalLines(s.shopId).catch(() => [])])
-      .then(([events, seal, money]) => {                // the newest first, also for lines of the same second (the number of the line breaks the tie)
-        const all = events.concat(money);
+    Promise.all((s.members || [s]).map((m) => Promise.all([newest(m.shopId, "events", "at", 50), newest(m.shopId, "anchors", "lastId", 1), journalLines(m.shopId).catch(() => [])])))
+      .then((parts) => {                                // one Hub or several: the newest first, also for lines of the same second (the number of the line breaks the tie)
+        const all = parts.flatMap(([events, , money]) => events.concat(money));
         all.sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : (b.auditId || 0) - (a.auditId || 0)));
-        logCache[s.shopId] = { events: all.slice(0, 150), seal: seal[0] || null };
+        const seals = parts.map(([, seal]) => seal[0]).filter(Boolean).sort((a, b) => (a.at < b.at ? 1 : -1));
+        logCache[s.shopId] = { events: all.slice(0, 150), seal: seals[0] || null };
       })
       .catch(() => { logCache[s.shopId] = { error: true }; })
       .finally(() => { if (section === "log") draw(); });
@@ -663,7 +702,9 @@ async function saveConfig(s) {
     cfgMsg[s.shopId] = { bad: [r.status === 403 ? "Hindi pinayagan ng cloud. Tingnan kung napa-publish na ang bagong Firestore Rules." : "May nagbago sa settings habang sine-save. Pindutin ang I-refresh at ulitin."] };
     cfgCache = {}; draw(); return;
   }
-  fetch(`${RTDB}/cfgwake/${uid}/${s.shopId}.json?auth=${encodeURIComponent(idToken)}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ at: { ".sv": "timestamp" } }) }).catch(() => {});
+  for (const m of s.members || [s]) {                          // every Hub of the shop looks at the new setup now
+    fetch(`${RTDB}/cfgwake/${uid}/${m.shopId}.json?auth=${encodeURIComponent(idToken)}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ at: { ".sv": "timestamp" } }) }).catch(() => {});
+  }
   cfgPending[s.shopId] = { v: doc.version, at: Date.now() }; delete cfgDraft[s.shopId]; delete cfgMsg[s.shopId];
   cfgCache[s.shopId] = { cfg: doc, ut: "" };
   fastUntil = Date.now() + 90000; draw(); clearTimeout(timer); timer = setTimeout(poll, 2500);
@@ -694,7 +735,7 @@ function settingsBlock(s, branch) {
   const pend = cfgPending[s.shopId], late = pend && Date.now() - pend.at > 90000;
   const head = el("section", { class: "block" }, title,
     el("p", { class: "empty", style: "margin:0" }, `Bersyon ${c.version} · huling pagbabago: ${at}. ` + (editable ? "Puwede mong palitan dito; ipatutupad ito ng Hub." : "Pagtingin lang ito.")),
-    ...(editable ? [] : [el("p", { class: "notice warn", style: "margin:10px 0 0" }, "Naka-off ang pag-edit mula sa dashboard. I-on sa admin page ng shop (Settings, Cloud, Pag-edit ng Settings at rates mula sa dashboard).")]),
+    ...(editable ? [] : [el("p", { class: "notice warn", style: "margin:10px 0 0" }, "Naka-off ang pag-edit mula sa dashboard. I-on sa admin page ng shop (Settings, Cloud, Pag-edit ng Settings at rates mula sa dashboard)" + ((s.members || []).length > 1 ? " sa bawat PC na may Hub." : ".") )]),
     ...(notice && Date.now() < notice.until && !pend ? [el("p", { class: "notice", style: "margin:10px 0 0" }, notice.text)] : []),
     ...(pend ? [el("p", { class: "notice warn", style: "margin:10px 0 0" }, late ? "Hindi pa naipapatupad ng Hub. Patay ba ito, o walang internet? Ipapatupad ito kapag bumalik." : `Naipadala (bersyon ${pend.v}). Hinihintay ang Hub…`)] : []),
     ...((cfgMsg[s.shopId] || {}).bad ? [el("div", { class: "notice warn", style: "margin:10px 0 0;font-weight:500", id: "cfgErrors" }, ...cfgMsg[s.shopId].bad.map((m) => el("div", {}, m)))] : []));
@@ -791,11 +832,20 @@ function addInto(a, b) {
   return a;
 }
 const norm = (d) => Object.assign(blank(d.date), d, { pcs: d.pcs || [], staff: d.staff || [], hours: d.hours && d.hours.length === 24 ? d.hours : new Array(24).fill(0) });
-function todayRow(s) { const t = s.today || {}, x = s.todayDetail || {}; return norm({ date: phToday(), income: t.income || 0, cash: t.cash || 0, gcash: t.gcash || 0, walkins: t.walkins || 0, loads: t.loads || 0, minutes: t.minutes || 0, consumed: t.consumed || 0, pcs: x.pcs, hours: x.hours, staff: x.staff }); }
+function todayRow(s) { return (s.members || [s]).reduce((a, m) => addInto(a, todayRowOf(m)), blank(phToday())); }
+function todayRowOf(s) { const t = s.today || {}, x = s.todayDetail || {}; return norm({ date: phToday(), income: t.income || 0, cash: t.cash || 0, gcash: t.gcash || 0, walkins: t.walkins || 0, loads: t.loads || 0, minutes: t.minutes || 0, consumed: t.consumed || 0, pcs: x.pcs, hours: x.hours, staff: x.staff }); }
 const withBranch = (rows, s) => (current === "all" && shops.length > 1)
   ? rows.map((r) => ({ ...r, pcs: (r.pcs || []).map((p) => ({ ...p, n: `${s.shopName} · ${p.n}` })) })) : rows;
 // The rows of a range for one branch: the finished part from the cloud (cached: a finished day does not change), plus today.
-async function pastRows(shopId, r) {
+async function pastRows(s, r) {                         // a shop: the finished part of every one of its Hubs, added up
+  const today = phToday(), ck = `g:${s.shopId}|${r.from}|${r.to}|${r.by}|${today}`;
+  if (salesCache[ck]) return salesCache[ck];
+  const parts = await Promise.all((s.members || [s]).map((m) => pastRowsOf(m.shopId, r)));
+  const byKey = new Map();
+  for (const part of parts) for (const row of part.rows) addInto(byKey.get(row.date) || byKey.set(row.date, blank(row.date)).get(row.date), row);
+  return (salesCache[ck] = { rows: [...byKey.values()].sort((a, b) => a.date.localeCompare(b.date)), partial: parts.some((x) => x.partial) });
+}
+async function pastRowsOf(shopId, r) {
   const today = phToday(), ck = `${shopId}|${r.from}|${r.to}|${r.by}|${today}`;
   if (salesCache[ck]) return salesCache[ck];
   const yesterday = addDays(today, -1);
@@ -819,7 +869,7 @@ async function loadRange(r) {
   const mine = current === "all" ? shops : shops.filter((x) => x.shopId === current), today = phToday(), all = [], parts = [];
   let partial = false;
   for (const s of mine) {
-    const pr = await pastRows(s.shopId, r);
+    const pr = await pastRows(s, r);
     partial = partial || pr.partial;
     let rows = withBranch(pr.rows.map((x) => addInto(blank(x.date), x)), s);       // a copy: today is added to it, and the cache must stay as read
     if (r.by === "day" && r.from <= today && today <= r.to) rows = rows.concat(withBranch([todayRow(s)], s));
@@ -959,7 +1009,7 @@ function salesView() {
     table(["", "Ngayon", "Nakaraan", "Pagbabago"], el("tbody", {}, cmpRow("Benta", total.income, prev.income, true), cmpRow("Cash", total.cash, prev.cash, true), cmpRow("GCash", total.gcash, prev.gcash, true),
       cmpRow("Walk-in", total.walkins, prev.walkins), cmpRow("Kinita", total.consumed, prev.consumed, true), cmpRow("Mga load", total.loads, prev.loads)))) : null;
   const perBranch = current === "all" && shops.length > 1 ? el("section", { class: "block", style: "overflow-x:auto" }, el("h2", {}, "Bawat branch"),
-    table(["Branch", "Benta", "Cash", "GCash", "Kinita"], el("tbody", {}, shops.map((s) => { const sd = salesCache[`${s.shopId}|${r.from}|${r.to}|${r.by}|${today}`];
+    table(["Branch", "Benta", "Cash", "GCash", "Kinita"], el("tbody", {}, shops.map((s) => { const sd = salesCache[`g:${s.shopId}|${r.from}|${r.to}|${r.by}|${today}`];
       const rs = [...(sd ? sd.rows : []), ...(r.by === "day" && r.from <= today && today <= r.to || r.by === "month" ? [todayRow(s)] : [])].reduce((a, x) => addInto(a, x), blank(""));
       return el("tr", {}, el("td", {}, el("b", {}, s.shopName)), el("td", { class: "num" }, peso(rs.income)), el("td", { class: "num" }, peso(rs.cash)), el("td", { class: "num" }, peso(rs.gcash)), el("td", { class: "num" }, peso(rs.consumed))); })))) : null;
   const shopName = current === "all" ? "Lahat ng branch" : (shops.find((x) => x.shopId === current) || {}).shopName || "";
