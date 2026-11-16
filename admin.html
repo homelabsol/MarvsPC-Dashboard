@@ -82,7 +82,7 @@
   <main>
     <div>
       <h1 style="font-size:24px">Mga shop at lisensya</h1>
-      <p class="note" style="margin-top:4px">Ibabasa ang bawat key at bawat shop minsan sa bawat refresh (1 read bawat isa).</p>
+      <p class="note" style="margin-top:4px">Pindutin ang isang hilera para makita ang mga unit at ang mga opsyon (suspend, palawigin, dagdag unit).</p>
     </div>
     <div class="cards" id="cards"></div>
     <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:space-between">
@@ -95,13 +95,13 @@
       <div class="form">
         <div class="col">
           <div><h2 style="font-size:17px">Gumawa ng license key</h2><p class="note" style="margin-top:4px">Ibibigay mo ang key sa client pagkatapos niyang magbayad.</p></div>
-          <div><div style="font-size:13px;font-weight:600;margin-bottom:8px">Bilang ng buwan (pamuno ng petsa)</div>
+          <div><div style="font-size:13px;font-weight:600;margin-bottom:8px">Mabilis na haba ng lisensya</div>
             <div class="flex" id="presets"><button type="button" data-m="1">1 buwan</button><button type="button" data-m="3">3 buwan</button><button type="button" data-m="12" class="on">12 buwan</button></div></div>
           <div class="flex"><label>Simula (from)<input type="date" id="kFrom" style="width:170px"></label><label>Hanggang (to)<input type="date" id="kTo" style="width:170px"></label></div>
-          <div class="flex"><label>Ilang unit (max)<input id="kMax" type="number" min="1" max="500" value="6" style="width:120px"></label>
+          <div class="flex"><label>Ilang unit (computer)<input id="kMax" type="number" min="1" max="500" value="6" style="width:120px"></label>
             <label>Ilang key ang gagawin<input id="kCount" type="number" min="1" max="20" value="1" style="width:160px"></label>
-            <label>Palugit (araw)<input id="kGrace" type="number" min="0" max="60" value="3" style="width:120px"></label>
-            <label>Para kay (opsyonal)<input id="kLabel" maxlength="60" placeholder="Owner o shop" style="width:200px"></label></div>
+            <label>Palugit pagkatapos mag-expire (araw)<input id="kGrace" type="number" min="0" max="60" value="3" style="width:120px"></label>
+            <label>Para kay (owner o shop, opsyonal)<input id="kLabel" maxlength="60" placeholder="Hal. Juan's Pisonet" style="width:220px"></label></div>
           <div class="flex" style="align-items:center"><button class="main" type="button" id="make">Gumawa ng key</button><p class="note" id="makeMsg"></p></div>
         </div>
         <div class="made hidden" id="made"><div class="l muted" style="font-size:13px;font-weight:600" id="madeTitle"></div><div id="madeKeys"></div>
@@ -236,18 +236,18 @@ function draw() {
   const groups = { ok: 0, soon: 0, bad: 0, unused: 0 }; let seats = 0, max = 0;
   for (const k of keys) { groups[judge(k).group]++; seats += Object.keys(k.units || {}).length; max += k.max || 0; }
   const card = (l, n, s) => el("div", { class: "card" }, el("div", { class: "l" }, l), el("div", { class: "n" }, n), el("div", { class: "s" }, s));
-  $("#cards").replaceChildren(card("Mga key", keys.length, `${seats} sa ${max} unit ang gamit`), card("Active", groups.ok, "may bisa pa ang lisensya"),
-    card("Malapit nang mag-expire", groups.soon, `wala pang ${WARN_DAYS} na araw`), card("Expired o Suspended", groups.bad, `${groups.unused} key ang hindi pa ginagamit`));
+  $("#cards").replaceChildren(card("Mga key", keys.length, `${seats} sa ${max} unit ang gamit · ${groups.unused} hindi pa ginagamit`), card("Active", groups.ok, "gumagamit na at may bisa pa"),
+    card("Malapit nang mag-expire", groups.soon, `${WARN_DAYS} araw o mas kaunti na lang`), card("Expired o Suspended", groups.bad, groups.bad ? "kailangang tingnan" : "walang problema"));
   const q = $("#find").value.trim().toLowerCase();
   const list = keys.filter((k) => !q || [k.id, k.label, k.ownerEmail, k.shop].some((x) => String(x || "").toLowerCase().includes(q)))
     .sort((a, b) => (a.to < b.to ? -1 : 1));
-  const rows = [el("div", { class: "row head" }, ...["Owner", "Shop", "License key", "Unit (gamit / max)", "Expiry", "Kalagayan", "Account", "Huling nakita"].map((t) => el("div", {}, t)))];
+  const rows = [el("div", { class: "row head" }, ...["Owner", "Shop", "License key", "Unit (gamit / max)", "Expiry", "Kalagayan", "Account ngayon", "Huling nakita"].map((t) => el("div", {}, t)))];
   for (const k of list) {
     const used = Object.keys(k.units || {}).length, st = judge(k);
     const seen = Object.keys(k.units || {}).map((h) => lastSeen(k, h)).filter(Boolean).sort().pop();
     const row = el("div", { class: "row" + (openKey === k.id ? " open" : ""), role: "button", tabindex: "0", "aria-expanded": String(openKey === k.id), "data-key": k.id },
-      el("div", {}, el("b", {}, k.label || k.ownerEmail || "—"), k.label && k.ownerEmail ? el("div", { class: "muted", style: "font-size:12.5px" }, k.ownerEmail) : ""),
-      el("div", {}, k.shop || (k.owner ? "—" : "Wala pang gumagamit")), el("div", {}, el("span", { class: "key" }, k.id)),
+      el("div", {}, el("b", {}, k.label || k.ownerEmail || "—"), k.owner ? (k.label && k.ownerEmail ? el("div", { class: "muted", style: "font-size:12.5px" }, k.ownerEmail) : "") : el("div", { class: "muted", style: "font-size:12.5px" }, "Wala pang nag-activate")),
+      el("div", {}, k.shop || "—"), el("div", {}, el("span", { class: "key" }, k.id)),
       el("div", {}, el("div", { style: "font-size:13px;font-weight:600" }, `${used} / ${k.max}` + (used >= k.max ? " · puno na" : "")),
         el("div", { class: "bar" }, el("i", { class: used >= k.max ? "full" : "", style: `width:${k.max ? Math.min(100, Math.round(used * 100 / k.max)) : 0}%` }))),
       el("div", {}, fmtDay(k.to)), el("div", {}, el("span", { class: "chip " + st.cls }, el("i"), st.text)),
