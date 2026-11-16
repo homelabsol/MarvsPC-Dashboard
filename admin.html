@@ -423,17 +423,18 @@ function loadGsi() {
   });
 }
 const gClientId = () => (localStorage.getItem(GCLIENT) || "").trim();
-function signInGoogle() {                                  // must run from a click: Google opens a window
+function signInGoogle() {                                  // must run from a click: Google opens a window, and the browser only allows that straight after the click
   if (TEST_API) { gTok = "fake-google-token"; gTokUntil = Date.now() + 3300000; return Promise.resolve(gTok); }
   if (!gClientId()) return Promise.reject(new GErr("noid"));
-  return loadGsi().then(() => new Promise((res, rej) => {
+  const go = () => new Promise((res, rej) => {               // runs at once when the Google script is already loaded (it is preloaded when the panel opens)
     const c = google.accounts.oauth2.initTokenClient({
       client_id: gClientId(), scope: "https://www.googleapis.com/auth/monitoring.read",
       callback: (r) => { if (r.error) return rej(new GErr(r.error, r.error_description)); gTok = r.access_token; gTokUntil = Date.now() + (Number(r.expires_in || 3600) - 120) * 1000; res(gTok); },
       error_callback: (e) => rej(new GErr((e && e.type) || "popup_failed_to_open")),
     });
     c.requestAccessToken({ prompt: "" });
-  }));
+  });
+  return window.google && google.accounts && google.accounts.oauth2 ? go() : loadGsi().then(go);
 }
 const haveToken = () => !!gTok && Date.now() < gTokUntil;
 
@@ -510,6 +511,7 @@ function drawUsage() {
   }
   if (!haveToken() && usage.state !== "error") usage = { state: usage.state === "init" || usage.state === "ok" ? "out" : usage.state };
   if (usage.state === "out" || usage.state === "init") {
+    if (!TEST_API) loadGsi().catch(() => { /* the test button says so */ });
     sub.textContent = "Mula sa Google (Cloud Monitoring). Mag-sign in para makita.";
     acts.append(btn("Mag-sign in with Google", "gSign", connect, "main"), btn("Subukan ang koneksyon", "gTest", testConnection));
     return;
@@ -534,8 +536,9 @@ async function refreshUsage() {
   clearTimeout(usageTimer); if (usage.state === "ok") usageTimer = setTimeout(() => { if (haveToken() && !document.hidden) refreshUsage(); else if (haveToken()) usageTimer = setTimeout(refreshUsage, 60000); else { usage = { state: "out" }; drawUsage(); } }, 300000);
 }
 async function connect() {
+  const asked = signInGoogle();                              // first, straight from the click
   usage = { state: "loading" }; drawUsage();
-  try { await signInGoogle(); } catch (e) { usage = { state: "error", error: e instanceof GErr ? e : new GErr("popup_failed_to_open") }; drawUsage(); return; }
+  try { await asked; } catch (e) { usage = { state: "error", error: e instanceof GErr ? e : new GErr("popup_failed_to_open") }; drawUsage(); return; }
   await refreshUsage();
 }
 function signOutGoogle() {
