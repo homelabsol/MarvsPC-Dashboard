@@ -1,0 +1,371 @@
+<!doctype html>
+<html lang="fil">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>MarvsPC-Piso · Main admin</title>
+<style>
+  /* The main admin page (only the owner of the whole system). It is a separate page with a separate login. Who may do what is decided by
+     the Firestore rules (the admins/<uid> document, added by hand in the Firebase console), not by this page. */
+  :root { --bg:#f4f6f8; --surface:#fff; --ink:#14171c; --muted:#566070; --line:#e3e7ec; --accent:#0f766e; --accent2:#0b5b55; --tint:#e6f2f0;
+          --ok:#166534; --okbg:#dcfce7; --warn:#92400e; --warnbg:#fef3c7; --bad:#b42318; --badbg:#fee4e2; --mute:#3b4553; --mutebg:#e8ecf0; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font:14.5px/1.5 Inter, "Segoe UI", system-ui, sans-serif; }
+  .hidden { display:none !important; }
+  button, input { font:inherit; color:inherit; }
+  input { padding:0 12px; border:1px solid #cbd2da; border-radius:8px; background:#fff; min-height:44px; width:100%; }
+  button { padding:0 16px; border-radius:8px; border:1px solid #cbd2da; background:#fff; cursor:pointer; min-height:44px; font-weight:600; }
+  button:hover { background:#f6f8fa; }
+  button.main { background:var(--accent); border-color:var(--accent); color:#fff; }
+  button.main:hover { background:var(--accent2); }
+  button.danger { color:var(--bad); border-color:#f0b4ae; }
+  button.on { background:var(--accent); border-color:var(--accent); color:#fff; }
+  button:focus-visible, input:focus-visible { outline:3px solid #f5b82e; outline-offset:1px; }
+  button:disabled { opacity:.55; cursor:default; }
+  .top { background:#fff; border-bottom:1px solid var(--line); padding:14px 28px; display:flex; flex-wrap:wrap; align-items:center; gap:14px; justify-content:space-between; }
+  .brand small { display:block; font-size:12px; font-weight:700; letter-spacing:.08em; color:var(--accent); }
+  .brand b { font-size:18px; }
+  main { max-width:1280px; margin:0 auto; padding:26px 28px 48px; display:flex; flex-direction:column; gap:22px; }
+  h1, h2 { margin:0; }
+  .cards { display:grid; grid-template-columns:repeat(4, minmax(0, 1fr)); gap:14px; }
+  @media (max-width:760px) { .cards { grid-template-columns:repeat(2, minmax(0, 1fr)); } }
+  .card { background:var(--surface); border:1px solid var(--line); border-radius:12px; padding:18px 20px; }
+  .card .l { font-size:13px; color:var(--muted); font-weight:500; }
+  .card .n { font-size:30px; font-weight:700; margin-top:6px; }
+  .card .s { font-size:12.5px; color:var(--muted); margin-top:2px; }
+  .panel { background:var(--surface); border:1px solid var(--line); border-radius:12px; overflow:hidden; }
+  .scroll { overflow-x:auto; }
+  .grid { min-width:1080px; }
+  .row { display:grid; grid-template-columns:1.3fr 1.1fr 1.5fr 1.1fr .9fr 1.2fr .6fr .9fr; gap:12px; align-items:center; padding:14px 20px; border-bottom:1px solid var(--line); font-size:14px; cursor:pointer; }
+  .row.head { font-size:12px; font-weight:600; color:var(--muted); text-transform:uppercase; letter-spacing:.04em; background:#f9fafb; cursor:default; }
+  .row.open { background:#f0f8f7; }
+  .row:focus-visible { outline:3px solid #f5b82e; outline-offset:-3px; }
+  .key { font-family:ui-monospace, Menlo, Consolas, monospace; font-size:12.5px; background:#f1f4f7; padding:3px 7px; border-radius:6px; }
+  .chip { display:inline-flex; align-items:center; gap:6px; padding:4px 10px; border-radius:999px; font-size:12.5px; font-weight:600; white-space:nowrap; }
+  .chip i { width:7px; height:7px; border-radius:50%; display:inline-block; background:currentColor; }
+  .ok { background:var(--okbg); color:var(--ok); } .warn { background:var(--warnbg); color:var(--warn); } .bad { background:var(--badbg); color:var(--bad); } .mute { background:var(--mutebg); color:var(--mute); }
+  .bar { height:8px; border-radius:99px; background:var(--line); overflow:hidden; margin-top:6px; } .bar i { display:block; height:100%; background:var(--accent); } .bar i.full { background:#b45309; }
+  .muted { color:var(--muted); }
+  .detail { padding:16px 20px 20px; background:#f0f8f7; border-bottom:1px solid var(--line); display:flex; flex-wrap:wrap; gap:24px; align-items:flex-start; }
+  .units { flex:1 1 460px; min-width:0; background:#fff; border:1px solid var(--line); border-radius:10px; overflow:hidden; font-size:13.5px; }
+  .unit { display:grid; grid-template-columns:1fr 1.3fr 1.2fr auto; gap:10px; align-items:center; padding:10px 14px; border-bottom:1px solid var(--line); }
+  .unit:last-child { border-bottom:0; }
+  .acts { flex:0 1 330px; display:flex; flex-direction:column; gap:10px; }
+  .acts .inl { display:flex; gap:8px; }
+  .form { padding:22px 24px; display:flex; flex-wrap:wrap; gap:28px; align-items:flex-start; }
+  .form .col { flex:1 1 420px; min-width:0; display:flex; flex-direction:column; gap:16px; }
+  .form label { display:flex; flex-direction:column; gap:6px; font-size:13px; font-weight:600; }
+  .flex { display:flex; gap:10px; flex-wrap:wrap; }
+  .made { flex:1 1 380px; min-width:0; background:#f4f6f8; border:1px solid var(--line); border-radius:10px; padding:18px 20px; }
+  .made .k { font-family:ui-monospace, Menlo, Consolas, monospace; font-size:18px; font-weight:700; word-break:break-all; display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin:8px 0; }
+  .note { font-size:13px; color:var(--muted); margin:0; } .note.err { color:var(--bad); } .note.good { color:var(--ok); }
+  .login { max-width:380px; margin:12vh auto 0; background:#fff; border:1px solid var(--line); border-radius:14px; padding:28px; display:grid; gap:14px; }
+</style>
+</head>
+<body>
+<div class="login hidden" id="loginBox">
+  <div class="brand"><small>MARVSPC-PISO</small><b>Main admin</b></div>
+  <form id="loginForm" style="display:grid;gap:12px">
+    <label style="display:grid;gap:6px;font-size:13px;font-weight:600">Email<input id="email" type="email" autocomplete="username" required></label>
+    <label style="display:grid;gap:6px;font-size:13px;font-weight:600">Password<input id="pw" type="password" autocomplete="current-password" required></label>
+    <button class="main" type="submit">Mag-login</button>
+    <p class="note err" id="loginMsg"></p>
+  </form>
+</div>
+
+<div id="app" class="hidden">
+  <header class="top">
+    <div class="brand"><small>MARVSPC-PISO</small><b>Main admin</b></div>
+    <div class="flex" style="align-items:center"><span class="muted" id="who"></span><span class="muted" id="fetched"></span><button id="refresh" type="button">I-refresh</button><button id="logout" type="button">Mag-logout</button></div>
+  </header>
+  <main>
+    <div>
+      <h1 style="font-size:24px">Mga shop at lisensya</h1>
+      <p class="note" style="margin-top:4px">Ibabasa ang bawat key at bawat shop minsan sa bawat refresh (1 read bawat isa).</p>
+    </div>
+    <div class="cards" id="cards"></div>
+    <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:space-between">
+      <input id="find" placeholder="Hanapin ang owner, shop o key" aria-label="Hanapin ang owner, shop o key" style="max-width:320px">
+      <p class="note" id="msg"></p>
+    </div>
+    <section class="panel"><div class="scroll"><div class="grid" id="table"></div></div></section>
+
+    <section class="panel">
+      <div class="form">
+        <div class="col">
+          <div><h2 style="font-size:17px">Gumawa ng license key</h2><p class="note" style="margin-top:4px">Ibibigay mo ang key sa client pagkatapos niyang magbayad.</p></div>
+          <div><div style="font-size:13px;font-weight:600;margin-bottom:8px">Bilang ng buwan (pamuno ng petsa)</div>
+            <div class="flex" id="presets"><button type="button" data-m="1">1 buwan</button><button type="button" data-m="3">3 buwan</button><button type="button" data-m="12" class="on">12 buwan</button></div></div>
+          <div class="flex"><label>Simula (from)<input type="date" id="kFrom" style="width:170px"></label><label>Hanggang (to)<input type="date" id="kTo" style="width:170px"></label></div>
+          <div class="flex"><label>Ilang unit (max)<input id="kMax" type="number" min="1" max="500" value="6" style="width:120px"></label>
+            <label>Ilang key ang gagawin<input id="kCount" type="number" min="1" max="20" value="1" style="width:160px"></label>
+            <label>Palugit (araw)<input id="kGrace" type="number" min="0" max="60" value="3" style="width:120px"></label>
+            <label>Para kay (opsyonal)<input id="kLabel" maxlength="60" placeholder="Owner o shop" style="width:200px"></label></div>
+          <div class="flex" style="align-items:center"><button class="main" type="button" id="make">Gumawa ng key</button><p class="note" id="makeMsg"></p></div>
+        </div>
+        <div class="made hidden" id="made"><div class="l muted" style="font-size:13px;font-weight:600" id="madeTitle"></div><div id="madeKeys"></div>
+          <p class="note">Hindi pa ginagamit. Kapag inilagay ng client sa isang unit, makikita mo rito kung saang shop at unit.</p></div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<script>
+// Public project key (not a secret). The data is protected by the Firestore rules, not by this key.
+const API_KEY = "AIzaSyBVsogVXAX6BX8wwfNoosjL0BHci4h2Mgk", PROJECT = "cashlesspisonet";
+let AUTH = "https://identitytoolkit.googleapis.com/v1", TOKEN = "https://securetoken.googleapis.com/v1/token", STORE = "https://firestore.googleapis.com/v1";
+{ // tests only, and only on this computer: point the page at a pretend Firebase
+  const t = new URLSearchParams(location.search).get("test_api");
+  if (t && ["localhost", "127.0.0.1"].includes(location.hostname)) { AUTH = t + "/idt/v1"; TOKEN = t + "/tok/v1/token"; STORE = t + "/fs/v1"; }
+}
+const $ = (s) => document.querySelector(s);
+const RT = "marvspc_admin_rt", DOCS = () => `${STORE}/projects/${PROJECT}/databases/(default)/documents`;
+const ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789", WARN_DAYS = 14;
+let idToken = null, uid = null, keys = [], shops = [], openKey = null, fetchedAt = null;
+
+function el(tag, attrs, ...kids) {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs || {})) { if (k === "class") e.className = v; else if (v !== null && v !== undefined) e.setAttribute(k, v); }
+  for (const k of kids.flat()) e.append(k instanceof Node ? k : document.createTextNode(String(k)));
+  return e;
+}
+function fromFs(v) {
+  if ("stringValue" in v) return v.stringValue;
+  if ("integerValue" in v) return Number(v.integerValue);
+  if ("doubleValue" in v) return v.doubleValue;
+  if ("booleanValue" in v) return v.booleanValue;
+  if ("arrayValue" in v) return (v.arrayValue.values || []).map(fromFs);
+  if ("mapValue" in v) return Object.fromEntries(Object.entries(v.mapValue.fields || {}).map(([k, x]) => [k, fromFs(x)]));
+  return null;
+}
+function toFs(v) {
+  if (v === null || v === undefined) return { nullValue: null };
+  if (typeof v === "boolean") return { booleanValue: v };
+  if (typeof v === "number") return Number.isInteger(v) ? { integerValue: String(v) } : { doubleValue: v };
+  if (typeof v === "string") return { stringValue: v };
+  if (Array.isArray(v)) return { arrayValue: { values: v.map(toFs) } };
+  return { mapValue: { fields: Object.fromEntries(Object.entries(v).map(([k, x]) => [k, toFs(x)])) } };
+}
+async function post(url, body, headers) {
+  const r = await fetch(url, { method: "POST", headers: headers || { "Content-Type": "application/json" }, body });
+  return [r, await r.json().catch(() => ({}))];
+}
+const authed = () => ({ "Content-Type": "application/json", Authorization: "Bearer " + idToken });
+
+// ---- sign-in: the same Firebase login, but only an account in admins/<uid> gets anywhere ----
+async function signIn(email, password) {
+  const [r, d] = await post(`${AUTH}/accounts:signInWithPassword?key=${API_KEY}`, JSON.stringify({ email, password, returnSecureToken: true }));
+  if (!r.ok) throw new Error(((d.error || {}).message || "").startsWith("TOO_MANY") ? "Masyadong maraming subok. Maghintay muna." : "Mali ang email o password.");
+  idToken = d.idToken; uid = d.localId; localStorage.setItem(RT, d.refreshToken); $("#who").textContent = email;
+}
+async function resume() {
+  const rt = localStorage.getItem(RT);
+  if (!rt) return false;
+  const [r, d] = await post(`${TOKEN}?key=${API_KEY}`, `grant_type=refresh_token&refresh_token=${encodeURIComponent(rt)}`, { "Content-Type": "application/x-www-form-urlencoded" });
+  if (!r.ok) { localStorage.removeItem(RT); return false; }
+  idToken = d.id_token; uid = d.user_id; localStorage.setItem(RT, d.refresh_token || rt);
+  return true;
+}
+async function isAdmin() {
+  const r = await fetch(`${DOCS()}/admins/${uid}`, { headers: authed() });
+  return r.ok;
+}
+function leave(message) {
+  localStorage.removeItem(RT); idToken = null;
+  $("#app").classList.add("hidden"); $("#loginBox").classList.remove("hidden"); $("#loginMsg").textContent = message || "";
+}
+
+// ---- days (Philippine time) ----
+const phToday = () => new Date().toLocaleDateString("sv-SE", { timeZone: "Asia/Manila" });
+const dayNo = (s) => Math.round(Date.UTC(+s.slice(0, 4), +s.slice(5, 7) - 1, +s.slice(8, 10)) / 86400000);
+function addMonths(s, m) {
+  const y = +s.slice(0, 4), mo = +s.slice(5, 7) - 1 + m, d = +s.slice(8, 10);
+  const last = new Date(Date.UTC(y + Math.floor(mo / 12), (mo % 12 + 12) % 12 + 1, 0)).getUTCDate();
+  const t = new Date(Date.UTC(y + Math.floor(mo / 12), (mo % 12 + 12) % 12, Math.min(d, last)));
+  return t.toISOString().slice(0, 10);
+}
+function fmtDay(s) { return s ? new Date(s + "T00:00:00Z").toLocaleDateString("fil-PH", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" }) : "—"; }
+function ago(iso) {
+  const t = Date.parse(iso || ""); if (!t) return "—";
+  const m = Math.max(0, Math.round((Date.now() - t) / 60000));
+  return m < 2 ? "Ngayon lang" : m < 60 ? `${m} min ang nakalipas` : m < 1440 ? `${Math.round(m / 60)} oras ang nakalipas` : `${Math.round(m / 1440)} araw ang nakalipas`;
+}
+
+// ---- what a key says (the same rules as the Hub) ----
+function judge(k) {
+  const t = phToday(), used = Object.keys(k.units || {}).length;
+  if (k.status === "suspended") return { cls: "mute", text: "Suspended", group: "bad" };
+  if (!used && !k.owner) return { cls: "warn", text: "Hindi pa ginagamit", group: "unused" };
+  if (t < k.from) return { cls: "mute", text: "Hindi pa nagsisimula", group: "ok" };
+  const left = dayNo(k.to) - dayNo(t);
+  if (left > WARN_DAYS) return { cls: "ok", text: "Active", group: "ok" };
+  if (left >= 0) return { cls: "warn", text: left === 0 ? "Mag-expire ngayon" : `Mag-expire sa ${left} araw`, group: "soon" };
+  const over = -left, grace = k.grace == null ? 3 : k.grace;
+  return over <= grace ? { cls: "bad", text: `Expired · palugit ${grace - over} araw pa`, group: "bad" } : { cls: "bad", text: "Expired na", group: "bad" };
+}
+
+// ---- loading: every key and every shop summary (1 read each) ----
+async function listAll(collection) {
+  const [r, d] = await post(`${DOCS()}:runQuery`, JSON.stringify({ structuredQuery: { from: [{ collectionId: collection }] } }), authed());
+  if (r.status === 403) throw new Error("denied");
+  if (!r.ok) throw new Error("Hindi mabasa ang " + collection);
+  return (d || []).filter((x) => x.document).map((x) => ({ id: x.document.name.split("/").pop(), updateTime: x.document.updateTime,
+    ...Object.fromEntries(Object.entries(x.document.fields || {}).map(([k, v]) => [k, fromFs(v)])) }));
+}
+async function load() {
+  try { [keys, shops] = await Promise.all([listAll("licenseKeys"), listAll("shops")]); }
+  catch (e) { if (e.message === "denied") return leave("Hindi ito main admin account."); say("#msg", e.message, "err"); return; }
+  fetchedAt = new Date(); $("#fetched").textContent = "Huling refresh: " + fetchedAt.toLocaleTimeString("fil-PH", { hour: "numeric", minute: "2-digit" });
+  draw();
+}
+function say(sel, text, kind) { const e = $(sel); e.textContent = text || ""; e.className = "note " + (kind || ""); }
+
+// ---- what the shops of a key are doing (from their summaries) ----
+function shopsOf(k) {
+  const ids = Object.keys(k.units || {});
+  return shops.filter((s) => ids.includes(s.hubId));
+}
+function lastSeen(k, hubId) {
+  const s = shops.find((x) => x.hubId === hubId);
+  return s ? s.updatedAt : "";
+}
+function accountsOf(k) { return Math.max(0, ...shopsOf(k).map((s) => Number((s.today || {}).accounts || 0))); }
+
+function draw() {
+  const groups = { ok: 0, soon: 0, bad: 0, unused: 0 }; let seats = 0, max = 0;
+  for (const k of keys) { groups[judge(k).group]++; seats += Object.keys(k.units || {}).length; max += k.max || 0; }
+  const card = (l, n, s) => el("div", { class: "card" }, el("div", { class: "l" }, l), el("div", { class: "n" }, n), el("div", { class: "s" }, s));
+  $("#cards").replaceChildren(card("Mga key", keys.length, `${seats} sa ${max} unit ang gamit`), card("Active", groups.ok, "may bisa pa ang lisensya"),
+    card("Malapit nang mag-expire", groups.soon, `wala pang ${WARN_DAYS} na araw`), card("Expired o Suspended", groups.bad, `${groups.unused} key ang hindi pa ginagamit`));
+  const q = $("#find").value.trim().toLowerCase();
+  const list = keys.filter((k) => !q || [k.id, k.label, k.ownerEmail, k.shop].some((x) => String(x || "").toLowerCase().includes(q)))
+    .sort((a, b) => (a.to < b.to ? -1 : 1));
+  const rows = [el("div", { class: "row head" }, ...["Owner", "Shop", "License key", "Unit (gamit / max)", "Expiry", "Kalagayan", "Account", "Huling nakita"].map((t) => el("div", {}, t)))];
+  for (const k of list) {
+    const used = Object.keys(k.units || {}).length, st = judge(k);
+    const seen = Object.keys(k.units || {}).map((h) => lastSeen(k, h)).filter(Boolean).sort().pop();
+    const row = el("div", { class: "row" + (openKey === k.id ? " open" : ""), role: "button", tabindex: "0", "aria-expanded": String(openKey === k.id), "data-key": k.id },
+      el("div", {}, el("b", {}, k.label || k.ownerEmail || "—"), k.label && k.ownerEmail ? el("div", { class: "muted", style: "font-size:12.5px" }, k.ownerEmail) : ""),
+      el("div", {}, k.shop || (k.owner ? "—" : "Wala pang gumagamit")), el("div", {}, el("span", { class: "key" }, k.id)),
+      el("div", {}, el("div", { style: "font-size:13px;font-weight:600" }, `${used} / ${k.max}` + (used >= k.max ? " · puno na" : "")),
+        el("div", { class: "bar" }, el("i", { class: used >= k.max ? "full" : "", style: `width:${k.max ? Math.min(100, Math.round(used * 100 / k.max)) : 0}%` }))),
+      el("div", {}, fmtDay(k.to)), el("div", {}, el("span", { class: "chip " + st.cls }, el("i"), st.text)),
+      el("div", {}, String(accountsOf(k))), el("div", { class: "muted" }, ago(seen)));
+    const toggle = () => { openKey = openKey === k.id ? null : k.id; draw(); };
+    row.onclick = toggle; row.onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(); } };
+    rows.push(row);
+    if (openKey === k.id) rows.push(detail(k));
+  }
+  if (!list.length) rows.push(el("div", { class: "row", style: "cursor:default" }, "Wala pang key. Gumawa sa ibaba."));
+  $("#table").replaceChildren(...rows);
+}
+
+function detail(k) {
+  const units = el("div", { class: "units" });
+  const ids = Object.keys(k.units || {});
+  for (const id of ids) {
+    const u = k.units[id], rm = el("button", { type: "button", class: "danger" }, "Alisin ang unit");
+    rm.onclick = () => removeUnit(k, id);
+    units.append(el("div", { class: "unit" }, el("b", {}, u.name || id), el("span", { class: "muted" }, "Nag-activate: " + fmtDay((u.at || "").slice(0, 10))), el("span", { class: "muted" }, "Huling nakita: " + ago(lastSeen(k, id))), rm));
+  }
+  if (!ids.length) units.append(el("div", { class: "unit" }, el("span", { class: "muted" }, "Wala pang unit na gumagamit ng key na ito.")));
+  const left = Math.max(0, k.max - ids.length);
+  const date = el("input", { type: "date", id: "newTo", value: k.to, "aria-label": "Bagong petsa ng expiry" }), ext = el("button", { type: "button", class: "main", id: "extend" }, "Palawigin");
+  ext.onclick = () => patch(k, ["to"], { to: date.value }, "Napalawig hanggang " + fmtDay(date.value));
+  const more = el("input", { type: "number", id: "moreUnits", min: "1", max: "500", value: "2", "aria-label": "Dagdag na unit" }), add = el("button", { type: "button", id: "addUnits" }, "Dagdagan ang unit");
+  add.onclick = () => patch(k, ["max"], { max: k.max + (parseInt(more.value, 10) || 0) }, "Dinagdagan ang unit");
+  const sus = el("button", { type: "button", class: k.status === "suspended" ? "main" : "danger", id: "suspend" }, k.status === "suspended" ? "Ibalik ang lisensya" : "I-suspend ang shop");
+  sus.onclick = () => patch(k, ["status"], { status: k.status === "suspended" ? "active" : "suspended" }, k.status === "suspended" ? "Naibalik" : "Na-suspend");
+  const del = el("button", { type: "button", class: "danger", id: "deleteKey" }, "Burahin ang key");
+  del.onclick = () => deleteKey(k);
+  return el("div", { class: "detail" }, el("div", { style: "flex:1 1 460px;min-width:0" }, el("div", { style: "font-size:13px;font-weight:600;margin-bottom:8px" }, "Mga unit" + (k.shop ? " ng " + k.shop : "")), units,
+    el("p", { class: "note", style: "margin-top:8px" }, left ? `May ${left} pang bakanteng puwesto. Ang sobra sa ${k.max} ay tatanggihan.` : "Puno na. Ang susunod na unit ay tatanggihan hanggang magdagdag.")),
+    el("div", { class: "acts" }, el("div", { class: "inl" }, date, ext), el("div", { class: "inl" }, more, add), sus, ids.length ? "" : del,
+      el("p", { class: "note" }, "Ang pag-suspend ay hihinto sa mga unit pagkatapos nilang suriin ang lisensya (hanggang 6 na oras). Mababalik mo ito anumang oras.")));
+}
+
+// ---- writes (only the fields that change; the rules check the result) ----
+async function commit(path, fields, mask, cond) {
+  const op = { update: { name: `projects/${PROJECT}/databases/(default)/documents/${path}`, fields: Object.fromEntries(Object.entries(fields).map(([k, v]) => [k, toFs(v)])) } };
+  if (mask) op.updateMask = { fieldPaths: mask };
+  if (cond) op.currentDocument = cond;
+  const [r] = await post(`${DOCS()}:commit`, JSON.stringify({ writes: [op] }), authed());
+  return r;
+}
+async function patch(k, mask, fields, okText) {
+  const bad = fields.to !== undefined && !/^\d{4}-\d{2}-\d{2}$/.test(fields.to);
+  if (bad) return say("#msg", "Ilagay ang tamang petsa.", "err");
+  if (fields.max !== undefined && (fields.max < 1 || fields.max > 500)) return say("#msg", "Ang unit ay 1 hanggang 500.", "err");
+  const r = await commit(`licenseKeys/${k.id}`, fields, mask);
+  if (!r.ok) return say("#msg", "Hindi tinanggap ng cloud (" + r.status + ").", "err");
+  say("#msg", okText + ".", "good"); await load();
+}
+async function removeUnit(k, id) {
+  if (!confirm("Alisin ang unit na ito sa lisensya? Mawawalan ito ng lisensya sa susunod nitong pagsusuri, at mababakante ang puwesto.")) return;
+  const units = { ...k.units }; delete units[id];
+  const r = await commit(`licenseKeys/${k.id}`, { units }, ["units"], { updateTime: k.updateTime });
+  if (!r.ok) return say("#msg", r.status === 400 ? "May nagbago habang ginagawa ito. I-refresh at subukan ulit." : "Hindi tinanggap ng cloud (" + r.status + ").", "err");
+  say("#msg", "Inalis ang unit.", "good"); await load();
+}
+async function deleteKey(k) {
+  if (!confirm("Burahin ang key na ito? Hindi na ito magagamit.")) return;
+  const r = await post(`${DOCS()}:commit`, JSON.stringify({ writes: [{ delete: `projects/${PROJECT}/databases/(default)/documents/licenseKeys/${k.id}` }] }), authed());
+  if (!r[0].ok) return say("#msg", "Hindi tinanggap ng cloud (" + r[0].status + ").", "err");
+  openKey = null; say("#msg", "Binura ang key.", "good"); await load();
+}
+
+// ---- making keys ----
+function randomKey() {
+  const out = [];
+  while (out.length < 16) { const b = new Uint8Array(32); crypto.getRandomValues(b); for (const x of b) { if (x < 248 && out.length < 16) out.push(ALPHABET[x % 31]); } }   // 248 = 31 x 8: no bias
+  const s = out.join(""); return `MPP-${s.slice(0, 4)}-${s.slice(4, 8)}-${s.slice(8, 12)}-${s.slice(12)}`;
+}
+function preset(m) {
+  const from = phToday(); $("#kFrom").value = from; $("#kTo").value = addMonths(from, m);
+  for (const b of document.querySelectorAll("#presets button")) b.classList.toggle("on", b.dataset.m === String(m));
+}
+for (const b of document.querySelectorAll("#presets button")) b.onclick = () => preset(+b.dataset.m);
+for (const id of ["#kFrom", "#kTo"]) $(id).oninput = () => { for (const b of document.querySelectorAll("#presets button")) b.classList.remove("on"); };
+
+$("#make").onclick = async () => {
+  const from = $("#kFrom").value, to = $("#kTo").value, max = parseInt($("#kMax").value, 10), count = parseInt($("#kCount").value, 10), grace = parseInt($("#kGrace").value, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to)) return say("#makeMsg", "Ilagay ang simula at ang hanggang.", "err");
+  if (to < from) return say("#makeMsg", "Dapat mas huli ang 'hanggang' kaysa sa simula.", "err");
+  if (!(max >= 1 && max <= 500)) return say("#makeMsg", "Ang unit ay 1 hanggang 500.", "err");
+  if (!(count >= 1 && count <= 20)) return say("#makeMsg", "Ang bilang ng key ay 1 hanggang 20.", "err");
+  const made = [];
+  for (let i = 0; i < count; i++) {
+    for (let tries = 0; tries < 5; tries++) {
+      const key = randomKey();
+      const r = await commit(`licenseKeys/${key}`, { v: 1, from, to, max, grace: grace >= 0 && grace <= 60 ? grace : 3, label: $("#kLabel").value.trim().slice(0, 60), status: "active", createdAt: new Date().toISOString(), units: {} }, null, { exists: false });
+      if (r.ok) { made.push(key); break; }
+      if (r.status !== 409 && r.status !== 403) return say("#makeMsg", "Hindi tinanggap ng cloud (" + r.status + ").", "err");
+    }
+  }
+  if (!made.length) return say("#makeMsg", "Hindi nakagawa. Subukan ulit.", "err");
+  say("#makeMsg", `Nakagawa ng ${made.length} key.`, "good");
+  $("#madeTitle").textContent = `Bagong key (${fmtDay(from)} hanggang ${fmtDay(to)}, ${max} unit)`;
+  $("#madeKeys").replaceChildren(...made.map((key) => { const copy = el("button", { type: "button" }, "Kopyahin"); copy.onclick = () => navigator.clipboard && navigator.clipboard.writeText(key).then(() => { copy.textContent = "Nakopya"; }); return el("div", { class: "k", "data-new": key }, key, copy); }));
+  $("#made").classList.remove("hidden");
+  await load();
+};
+
+// ---- start ----
+$("#find").oninput = draw;
+$("#refresh").onclick = () => load();
+$("#logout").onclick = () => leave("");
+$("#loginForm").onsubmit = async (e) => {
+  e.preventDefault(); $("#loginMsg").textContent = "";
+  try { await signIn($("#email").value.trim(), $("#pw").value); } catch (err) { $("#loginMsg").textContent = err.message; return; }
+  $("#pw").value = ""; await open();
+};
+async function open() {
+  if (!(await isAdmin())) return leave("Hindi ito main admin account.");
+  $("#loginBox").classList.add("hidden"); $("#app").classList.remove("hidden");
+  preset(12); await load();
+}
+(async () => { if (await resume()) { $("#who").textContent = "naka-login"; await open(); } else $("#loginBox").classList.remove("hidden"); })();
+</script>
+</body>
+</html>

@@ -341,6 +341,7 @@ function joinHubs(id, ms) {
            .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true })),
     week: Object.values(week).sort((a, b) => a.date.localeCompare(b.date)),
     recent: (ms.length > 1 ? [...recent.values()].sort((a, b) => String(b.c).localeCompare(String(a.c))) : [...recent.values()]).slice(0, 30),
+    resetList: ms.flatMap((m) => (m.resetList || []).map((q) => ({ ...q, _shop: m.shopId }))),
     pendingList: ms.flatMap((m) => (m.pendingList || []).map((q) => ({ ...q, _shop: m.shopId }))).sort((a, b) => (ms.length > 1 ? String(a.c).localeCompare(String(b.c)) : 0)),
     remote: ms.every((m) => m.remote === true), cfgEdit: ms.every((m) => m.cfgEdit === true),
     weakCount: Math.max(0, ...ms.map((m) => m.weakCount || 0)),
@@ -445,26 +446,29 @@ function timeText(iso) { return iso ? new Date(iso).toLocaleTimeString("fil-PH",
 // The requests waiting for approval. Approve and Reject send ONE tiny note to the Hub (Realtime Database); the Hub
 // applies it with its own record of the request, so nothing about the amount can be changed from here.
 async function decideRequest(shopId, req, d, button, row) {
+  const reset = req.reset === true;                  // a forgotten password, not a load
   const what = d === "approve" ? (req.k === "cash" ? "Natanggap na ang cash?" : "Tiyaking pumasok ang bayad sa GCash app mo.") : "";
-  if (!confirm(`${d === "approve" ? "I-approve" : "I-reject"} ang ₱${req.a} ni ${req.u}? ${what}`)) return;
+  const ask = reset ? `${d === "approve" ? "I-approve" : "I-reject"} ang reset ng password ni ${req.u}? ${d === "approve" ? `Makakapag-type siya ng bagong password sa ${req.pc || "PC"} sa loob ng 10 minuto. Tiyaking siya talaga ang nasa PC.` : ""}`
+    : `${d === "approve" ? "I-approve" : "I-reject"} ang ₱${req.a} ni ${req.u}? ${what}`;
+  if (!confirm(ask)) return;
   button.disabled = true;
   try {
     const r = await fetch(`${RTDB}/decisions/${uid}/${shopId}/${encodeURIComponent(req.id)}.json?auth=${encodeURIComponent(idToken)}`,
       { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ d, at: { ".sv": "timestamp" } }) });
     if (!r.ok) throw new Error("denied");
     // Remember it: the summary we are showing is older than the Hub's answer, and it still lists this request.
-    decided[req.id] = { d, at: Date.now(), u: req.u, a: req.a, k: req.k };
+    decided[req.id] = { d, at: Date.now(), u: req.u, a: req.a, k: req.k, reset };
     fastUntil = Date.now() + 45000;                  // look every 3 seconds until the Hub has answered
     draw(); clearTimeout(timer); timer = setTimeout(poll, 2500);
   } catch (e) { button.disabled = false; alert("Hindi naipadala. Subukan ulit."); }
 }
 // A request we pressed and that is no longer in the list was done by the Hub: say so.
 function settleDecisions() {
-  const present = new Set(shops.flatMap((s) => (s.pendingList || []).map((q) => q.id)));
+  const present = new Set(shops.flatMap((s) => [...(s.pendingList || []), ...(s.resetList || [])].map((q) => q.id)));
   for (const [id, x] of Object.entries(decided)) {
     if (present.has(id)) continue;
     delete decided[id];
-    notice = { text: `${x.d === "approve" ? "✓ Naaprubahan" : "✓ Na-reject"} ang ₱${x.a} ni ${x.u}.`, until: Date.now() + 10000 };
+    notice = { text: x.reset ? `${x.d === "approve" ? "✓ Naaprubahan" : "✓ Na-reject"} ang reset ng password ni ${x.u}.` : `${x.d === "approve" ? "✓ Naaprubahan" : "✓ Na-reject"} ang ₱${x.a} ni ${x.u}.`, until: Date.now() + 10000 };
   }
   if (!Object.keys(decided).length && Date.now() > fastUntil) fastUntil = 0;
 }
@@ -491,10 +495,25 @@ function requestsBlock(s, branch) {
   }
   if (!list.length) body.append(el("tr", {}, el("td", { colspan: 5, class: "empty" }, "Walang naghihintay.")));
   const done = notice && Date.now() < notice.until ? el("p", { class: "notice" }, notice.text) : null;
+  const resetRows = el("tbody");
+  for (const q0 of s.resetList || []) {                                       // customers who forgot the password: the owner approves, the customer types the new one at the PC
+    const q = { ...q0, reset: true }, act = el("td", { class: "act" }), sent = decided[q.id];
+    if (sent) act.append(el("span", {}, `Naipadala (${sent.d === "approve" ? "Approve" : "Reject"}). Hinihintay ang Hub… `));
+    else if (s.remote) {
+      const ok = el("button", { type: "button", class: "btn-ok", style: "margin-right:6px" }, "Aprubahan"), no = el("button", { type: "button", class: "btn-no" }, "Reject");
+      ok.onclick = () => decideRequest(q._shop || s.shopId, q, "approve", ok); no.onclick = () => decideRequest(q._shop || s.shopId, q, "reject", no);
+      act.append(ok, no);
+    }
+    resetRows.append(el("tr", {}, el("td", {}, timeText(q.c)), el("td", {}, el("b", {}, q.u)), el("td", {}, q.pc || ""), act));
+  }
+  const resets = (s.resetList || []).length ? [el("h2", { style: "margin-top:18px" }, "Nakalimot ng password"),
+    el("p", { class: "empty", style: "margin:0 0 8px" }, s.remote ? "Tanungin muna ang customer kung siya talaga. Pagka-approve, siya mismo ang magta-type ng bagong password sa PC; hindi mo malalaman ang password."
+      : "Naka-off ang pag-approve mula sa phone. I-on sa admin page ng shop (Settings, Cloud)."),
+    el("table", {}, el("thead", {}, el("tr", {}, el("th", {}, "Oras"), el("th", {}, "Username"), el("th", {}, "PC"), el("th", {}, ""))), resetRows)] : [];
   return el("section", { class: "block", style: "overflow-x:auto" }, el("h2", {}, branch ? `Mga request na naghihintay: ${branch}` : "Mga request na naghihintay"), ...(done ? [done] : []),
     el("p", { class: "empty", style: "margin:0 0 8px" }, s.remote ? "Tingnan muna sa GCash app mo kung pumasok ang bayad at tugma ang reference number bago i-approve."
       : "Naka-off ang pag-approve mula sa phone. I-on sa admin page ng shop (Settings, Cloud)."),
-    el("table", {}, el("thead", {}, el("tr", {}, el("th", {}, "Oras"), el("th", {}, "Username"), el("th", {}, "Halaga"), el("th", {}, "Bayad"), el("th", {}, ""))), body));
+    el("table", {}, el("thead", {}, el("tr", {}, el("th", {}, "Oras"), el("th", {}, "Username"), el("th", {}, "Halaga"), el("th", {}, "Bayad"), el("th", {}, ""))), body), ...resets);
 }
 function dayText(iso) { return iso ? new Date(iso).toLocaleDateString("fil-PH", { month: "short", day: "numeric" }) : "—"; }
 // The true balance of an account is the one in the cloud (every Hub adds to it); a Hub's own copy can be older. Read once for the
@@ -576,7 +595,7 @@ let section = "dashboard";
 function sectionFromHash() { const k = (location.hash.match(/^#\/(\w+)/) || [])[1]; return SECTIONS.some((s) => s[0] === k) ? k : "dashboard"; }
 function drawSide() {
   const side = $("#side"); side.replaceChildren();
-  const waiting = current === "all" ? sum((s) => (s.pendingList || []).length) : ((shops.find((s) => s.shopId === current) || {}).pendingList || []).length;
+  const waiting = current === "all" ? sum((s) => (s.pendingList || []).length + (s.resetList || []).length) : (((shops.find((s) => s.shopId === current) || {}).pendingList || []).length + (((shops.find((s) => s.shopId === current) || {}).resetList || []).length));
   for (const [key, label, icon] of SECTIONS) {
     const a = el("a", { href: "#/" + key }, label);
     a.insertAdjacentHTML("afterbegin", icon);
