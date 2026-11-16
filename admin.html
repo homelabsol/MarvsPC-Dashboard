@@ -19,6 +19,8 @@
   button:hover { background:#f6f8fa; }
   button.main { background:var(--accent); border-color:var(--accent); color:#fff; }
   button.main:hover { background:var(--accent2); }
+  a.btn { display:inline-flex; align-items:center; padding:0 16px; min-height:44px; border-radius:8px; font-weight:600; text-decoration:none; background:var(--accent); color:#fff; }
+  a.btn:hover { background:var(--accent2); }
   button.danger { color:var(--bad); border-color:#f0b4ae; }
   button.on { background:var(--accent); border-color:var(--accent); color:#fff; }
   button:focus-visible, input:focus-visible { outline:3px solid #f5b82e; outline-offset:1px; }
@@ -392,13 +394,7 @@ async function deleteKey(k) {
 }
 
 
-// ---- how much of the free Firebase quota is used (the numbers are Google's own, from Cloud Monitoring) ----
-const MON = () => (TEST_API ? TEST_API + "/mon/v3" : "https://monitoring.googleapis.com/v3");
-const GCLIENT = "marvspc_gclient", LIMITS = { reads: 50000, writes: 20000 };
-const METRICS = { reads: "firestore.googleapis.com/document/read_count", writes: "firestore.googleapis.com/document/write_count" };
-class GErr extends Error { constructor(code, extra) { super(code); this.code = code; this.extra = extra; } }
-let gTok = null, gTokUntil = 0, usage = { state: "init" }, usageTimer = null, backFromGoogle = null;
-
+// ---- the free Firebase quota: the exact numbers are only in the Firebase console (Google asks for billing before it lets any page read them) ----
 const LA = new Intl.DateTimeFormat("en-US", { timeZone: "America/Los_Angeles", hourCycle: "h23", hour: "2-digit", minute: "2-digit", second: "2-digit" });
 function pacificStart(ms) {                               // the start of the Pacific day that holds ms: Firestore's free quota resets there
   const o = {}; for (const p of LA.formatToParts(new Date(ms))) o[p.type] = +p.value;
@@ -407,162 +403,13 @@ function pacificStart(ms) {                               // the start of the Pa
 function resetAtText(startMs) {
   return new Date(startMs + 86400000).toLocaleTimeString("fil-PH", { hour: "numeric", minute: "2-digit", timeZone: "Asia/Manila" });
 }
-function pacificDays(now) {                                // today and the 7 days before it, each [from, to)
-  const bounds = [pacificStart(now)];
-  for (let i = 0; i < 7; i++) bounds.push(pacificStart(bounds[i] - 12 * 3600000));
-  const days = [];
-  for (let i = 7; i >= 1; i--) days.push({ from: bounds[i], to: bounds[i - 1] });
-  return { today: { from: bounds[0], to: now }, days };
-}
-
-const gClientId = () => (localStorage.getItem(GCLIENT) || "").trim();
-const GSTATE = "marvspc_gstate", GSCOPE = "https://www.googleapis.com/auth/monitoring.read";
-const redirectUri = () => location.origin + location.pathname;      // this very page: it must be listed in the client's Authorized redirect URIs
-function googleAuthUrl(state) {
-  const q = new URLSearchParams({ client_id: gClientId(), redirect_uri: redirectUri(), response_type: "token", scope: GSCOPE, state, include_granted_scopes: "true", prompt: "select_account" });
-  return "https://accounts.google.com/o/oauth2/v2/auth?" + q;
-}
-function signInGoogle() {                                  // no popup: the whole page goes to Google and comes back with the answer in the address
-  if (TEST_API) { gTok = "fake-google-token"; gTokUntil = Date.now() + 3300000; return Promise.resolve(gTok); }
-  if (!gClientId()) return Promise.reject(new GErr("noid"));
-  const b = new Uint8Array(16); crypto.getRandomValues(b);
-  const state = [...b].map((x) => x.toString(16).padStart(2, "0")).join("");
-  try { sessionStorage.setItem(GSTATE, state); } catch (e) { return Promise.reject(new GErr("storage")); }
-  location.assign(googleAuthUrl(state));
-  return new Promise(() => { /* the page is leaving */ });
-}
-function takeGoogleReturn() {                              // Google's answer arrives after the # of the address; read it once and wipe it
-  if (!/[#&](access_token|error)=/.test(location.hash)) return null;
-  const q = new URLSearchParams(location.hash.slice(1));
-  history.replaceState(null, "", location.pathname + location.search);
-  let want = ""; try { want = sessionStorage.getItem(GSTATE) || ""; sessionStorage.removeItem(GSTATE); } catch (e) { /* none */ }
-  if (!want || q.get("state") !== want) return { error: "state" };
-  if (q.get("error")) return { error: q.get("error") };
-  if (!(q.get("scope") || "").includes("monitoring.read")) return { error: "scope" };
-  gTok = q.get("access_token"); gTokUntil = Date.now() + (Number(q.get("expires_in") || 3600) - 120) * 1000;
-  return { token: true };
-}
-const haveToken = () => !!gTok && Date.now() < gTokUntil;
-
-async function monitor(metric, from, to) {                 // one Pacific day (or part of it) as ONE number: the sum of everything in it
-  if (!haveToken()) throw new GErr("expired");
-  const period = Math.max(60, Math.round((to - from) / 1000));
-  const q = new URLSearchParams({ filter: `metric.type="${metric}"`, "interval.startTime": new Date(from).toISOString(), "interval.endTime": new Date(to).toISOString(),
-    "aggregation.alignmentPeriod": period + "s", "aggregation.perSeriesAligner": "ALIGN_SUM", "aggregation.crossSeriesReducer": "REDUCE_SUM" });
-  const r = await fetch(`${MON()}/projects/${PROJECT}/timeSeries?${q}`, { headers: { Authorization: "Bearer " + gTok } });
-  if (!r.ok) {
-    let body = {}; try { body = await r.json(); } catch (e) { /* not json */ }
-    const msg = JSON.stringify(body);
-    if (r.status === 401) { gTok = null; throw new GErr("expired"); }
-    if (r.status === 403 && /SERVICE_DISABLED|has not been used|is disabled/i.test(msg)) throw new GErr("mon_disabled");
-    if (r.status === 403) throw new GErr("mon_403", String((body.error && body.error.message) || "").slice(0, 300));
-    throw new GErr("mon_other", r.status);
-  }
-  const d = await r.json();
-  let sum = 0; for (const ts of d.timeSeries || []) for (const pt of ts.points || []) sum += Number((pt.value || {}).int64Value ?? (pt.value || {}).doubleValue ?? 0);
-  return Math.round(sum);
-}
-async function readUsage() {
-  const now = Date.now(), { today, days } = pacificDays(now);
-  const jobs = {};
-  for (const key of ["reads", "writes"]) {
-    jobs[key] = { today: monitor(METRICS[key], today.from, today.to), days: Promise.all(days.map((d) => monitor(METRICS[key], d.from, d.to))) };
-  }
-  const out = { at: now, resetAt: resetAtText(today.from), elapsedH: (now - today.from) / 3600000, labels: days.map((d) => new Date(d.from + 12 * 3600000).toLocaleDateString("fil-PH", { weekday: "short", timeZone: "America/Los_Angeles" })) };
-  for (const key of ["reads", "writes"]) { out[key] = { today: await jobs[key].today, days: await jobs[key].days }; }
-  return out;
-}
-
-function hintFor(e) {
-  const c = e.code, link = "https://console.cloud.google.com/apis/library/monitoring.googleapis.com?project=" + PROJECT;
-  const H = {
-    noid: "Ilagay muna ang Google Client ID.",
-    state: "Hindi tumugma ang sagot ng Google sa hiningi ng page. Subukan ulit mag-sign in, sa iisang tab lang.",
-    scope: "Hindi napayagan ang pagbasa ng Monitoring. Sa pahina ng Google, i-check ang pahintulot na iyon bago Continue.",
-    storage: "Hindi makapag-save ang browser (sessionStorage). Huwag gamitin ang mahigpit na private mode.",
-    access_denied: "Hindi pinayagan ng Google ang account na ito. Idagdag ang email sa Test users ng OAuth consent screen, at piliin ang tamang account.",
-    invalid_client: "Mali ang Client ID.",
-    expired: "Nag-expire na ang sign-in sa Google. Mag-sign in ulit.",
-    mon_disabled: "Hindi pa naka-enable ang Cloud Monitoring API. Buksan ito at pindutin ang Enable: " + link,
-    mon_403: "Walang pahintulot sa project ang Google account na ito. Gamitin ang account na may hawak ng Firebase project." + (e.extra ? ` Sabi ng Google: "${e.extra}"` : ""),
-  };
-  return H[c] || (c === "mon_other" ? `Hindi nabasa ang Cloud Monitoring (code ${e.extra}).` : `Hindi natuloy ang sign-in (${c}). Pindutin ang Subukan ang koneksyon.`);
-}
-
-function meter(label, key, d, lim) {
-  const used = d[key].today, pct = used / lim * 100, cls = pct >= 90 ? "r" : pct >= 70 ? "y" : "g";
-  const nf = (n) => n.toLocaleString("en-US");
-  const kids = [el("div", { class: "muted", style: "font-size:13px;font-weight:600" }, label),
-    el("div", { class: "big" }, nf(used), el("span", { class: "of" }, " sa " + nf(lim))),
-    el("div", { class: "bar" }, el("i", { class: cls, style: `width:${Math.min(100, pct)}%` })),
-    el("p", { class: "note", style: "margin-top:6px" }, `${pct < 10 ? pct.toFixed(1) : Math.round(pct)}% ang nagamit · natitira ${nf(Math.max(0, lim - used))}` + (pct >= 90 ? " · MALAPIT NA SA LIMITASYON" : pct >= 70 ? " · malapit na" : ""))];
-  if (d.elapsedH >= 2 && used > 0) kids.push(el("p", { class: "note" }, `Tantiya sa dulo ng araw, kung ganito pa rin ang takbo: ${nf(Math.round(used / d.elapsedH * 24))}. Tantiya lang ito, hindi galing sa Google.`));
-  const top = Math.max(lim, ...d[key].days, used);
-  const strip = el("div", { class: "days", role: "img", "aria-label": `${label}, huling 7 araw` });
-  d[key].days.forEach((v, i) => strip.append(el("div", { title: nf(v) }, el("i", { style: `height:${Math.max(2, Math.round(v / top * 100))}%` }), d.labels[i])));
-  strip.append(el("div", { title: nf(used) }, el("i", { class: "today", style: `height:${Math.max(2, Math.round(used / top * 100))}%` }), "Ngayon"));
-  kids.push(strip);
-  return el("div", { class: "meter" }, ...kids);
-}
-
 function drawUsage() {
-  const acts = $("#useActs"), body = $("#useBody"), sub = $("#useSub"); acts.replaceChildren(); body.replaceChildren();
-  const btn = (text, id, fn, cls) => { const b = el("button", { type: "button", id, class: cls || "" }, text); b.onclick = fn; return b; };
-  const hasId = !!gClientId() || (!!TEST_API && !location.search.includes("noid"));
-  if (!hasId) {
-    sub.textContent = "Kailangan muna ang Google Client ID (isang beses lang).";
-    const inp = el("input", { id: "gClient", placeholder: "xxxx.apps.googleusercontent.com", style: "max-width:420px", "aria-label": "Google Client ID" });
-    body.append(el("div", { class: "flex" }, inp, btn("I-save", "gSave", () => { const v = inp.value.trim(); if (!/\.apps\.googleusercontent\.com$/.test(v)) return say("#msg", "Hindi ito mukhang Client ID. Dapat nagtatapos sa .apps.googleusercontent.com.", "err"); localStorage.setItem(GCLIENT, v); say("#msg", "", ""); usage = { state: "out" }; drawUsage(); }, "main")));
-    return;
-  }
-  if (!haveToken() && usage.state !== "error") usage = { state: usage.state === "init" || usage.state === "ok" ? "out" : usage.state };
-  if (usage.state === "out" || usage.state === "init") {
-    sub.textContent = "Mula sa Google (Cloud Monitoring). Mag-sign in para makita.";
-    body.append(el("p", { class: "note", id: "useUri" }, "Isang beses lang: ilagay ang address na ito sa Authorized redirect URIs ng Client ID sa Google Cloud: ", el("span", { class: "key" }, redirectUri())));
-    acts.append(btn("Mag-sign in with Google", "gSign", connect, "main"), btn("Subukan ang koneksyon", "gTest", testConnection));
-    return;
-  }
-  if (usage.state === "loading") { sub.textContent = "Kinukuha mula sa Google…"; return; }
-  if (usage.state === "error") {
-    sub.textContent = "Hindi nakuha ang bilang mula sa Google.";
-    body.append(el("p", { class: "note err", id: "useErr" }, hintFor(usage.error)));
-    acts.append(btn("Mag-sign in with Google", "gSign", connect, "main"), btn("Subukan ang koneksyon", "gTest", testConnection));
-    return;
-  }
-  const d = usage.data;
-  sub.textContent = `Mula sa Google · huling refresh ${new Date(d.at).toLocaleTimeString("fil-PH", { hour: "numeric", minute: "2-digit" })} · magre-reset ang quota sa ${d.resetAt} (hatinggabi sa Pacific time) · may ilang minutong pagkaantala ang datos ng Google.`;
-  acts.append(btn("I-refresh", "gRefresh", refreshUsage), btn("Mag-sign out", "gOut", signOutGoogle), btn("Subukan ang koneksyon", "gTest", testConnection));
-  body.append(el("div", { style: "display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px" }, meter("Reads", "reads", d, LIMITS.reads), meter("Writes", "writes", d, LIMITS.writes)));
-  body.append(el("p", { class: "note", style: "margin-top:10px" }, "Ang mga reads at writes ay para sa buong Firestore ng project, kasama ang lahat ng shop at ang mga dashboard. Libreng limitasyon kada araw: 50,000 reads at 20,000 writes."));
+  const link = `https://console.firebase.google.com/project/${PROJECT}/firestore/databases/-default-/usage`;
+  $("#useSub").textContent = "Ang eksaktong bilang ng reads at writes ay nasa Firebase console. Hindi ito mababasa ng pahinang ito nang libre.";
+  $("#useActs").replaceChildren(el("a", { class: "btn main", id: "useLink", href: link, target: "_blank", rel: "noopener" }, "Buksan ang Usage sa Firebase"));
+  $("#useBody").replaceChildren(el("p", { class: "note", id: "useReset" }, `Libreng limitasyon bawat araw: 50,000 reads at 20,000 writes. Nagre-reset ito ngayong ${resetAtText(pacificStart(Date.now()))} (oras ng Pilipinas).`));
 }
-async function refreshUsage() {
-  usage = { state: "loading" }; drawUsage();
-  try { usage = { state: "ok", data: await readUsage() }; } catch (e) { usage = { state: "error", error: e instanceof GErr ? e : new GErr("mon_other", String(e.message || e)) }; }
-  drawUsage();
-  clearTimeout(usageTimer); if (usage.state === "ok") usageTimer = setTimeout(() => { if (haveToken() && !document.hidden) refreshUsage(); else if (haveToken()) usageTimer = setTimeout(refreshUsage, 60000); else { usage = { state: "out" }; drawUsage(); } }, 300000);
-}
-async function connect() {
-  const asked = signInGoogle();                              // first, straight from the click
-  usage = { state: "loading" }; drawUsage();
-  try { await asked; } catch (e) { usage = { state: "error", error: e instanceof GErr ? e : new GErr("storage") }; drawUsage(); return; }
-  await refreshUsage();
-}
-function signOutGoogle() {
-  if (gTok && !TEST_API) fetch("https://oauth2.googleapis.com/revoke?token=" + encodeURIComponent(gTok), { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" } }).catch(() => { /* nothing to revoke */ });
-  gTok = null; usage = { state: "out" }; clearTimeout(usageTimer); drawUsage();
-}
-async function testConnection() {                         // says exactly which step fails, so nobody has to guess
-  const box = el("ul", { class: "steps", id: "useSteps" }); $("#useBody").prepend(box);
-  const line = (ok, text) => box.append(el("li", { class: ok ? "okk" : "no" }, (ok ? "OK · " : "PUMALPAK · ") + text));
-  if (!gClientId() && !TEST_API) return line(false, "Walang Client ID. " + hintFor(new GErr("noid")));
-  line(true, "May Client ID.");
-  line(true, "Ang redirect URI na dapat nakalista sa Authorized redirect URIs ng Client ID: " + redirectUri());
-  if (!haveToken()) return line(false, "Wala pang sign-in sa Google. Pindutin ang Mag-sign in with Google; babalik ka rito pagkatapos.");
-  line(true, "May pahintulot mula sa Google account.");
-  try { const n = await monitor(METRICS.reads, pacificStart(Date.now()), Date.now()); line(true, `Nabasa ang Cloud Monitoring (reads ngayon: ${n.toLocaleString("en-US")}).`); }
-  catch (e) { return line(false, hintFor(e instanceof GErr ? e : new GErr("mon_other", String(e.message || e)))); }
-  line(true, "Handa na ang lahat.");
-}
+try { localStorage.removeItem("marvspc_gclient"); } catch (e) { /* nothing saved */ }
 
 // ---- making keys ----
 function randomKey() {
@@ -601,7 +448,6 @@ $("#make").onclick = async () => {
 };
 
 // ---- start ----
-backFromGoogle = takeGoogleReturn();
 $("#find").oninput = draw;
 $("#refresh").onclick = () => load();
 $("#logout").onclick = () => leave("");
@@ -614,9 +460,7 @@ async function open() {
   if (!(await isAdmin())) return leave("Hindi ito main admin account.");
   $("#loginBox").classList.add("hidden"); $("#app").classList.remove("hidden");
   preset(12);
-  if (backFromGoogle && backFromGoogle.error) usage = { state: "error", error: new GErr(backFromGoogle.error) };
   drawUsage();
-  if (backFromGoogle && backFromGoogle.token) refreshUsage();
   await load();
 }
 (async () => { if (await resume()) { $("#who").textContent = "naka-login"; await open(); } else $("#loginBox").classList.remove("hidden"); })();
