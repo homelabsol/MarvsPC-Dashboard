@@ -735,13 +735,19 @@ const SETTING_FIELDS = [
   ["custom_amount_enabled", "Ibang halaga ng customer", "bool"],
 ];
 let cfgDraft = {}, cfgPending = {}, cfgMsg = {};
-const draftOf = (shopId, cfg) => (cfgDraft[shopId] = cfgDraft[shopId] || { settings: { ...(cfg.settings || {}) }, rates: (cfg.rates || []).map((r) => ({ amount: r.amount, minutes: r.minutes })) });
+const SWITCH_EDIT = ["approve", "maxPhp", "dailyPhp", "accounts", "journal"];           // the switches the dashboard may change (not the right to edit itself)
+const draftOf = (shopId, cfg) => (cfgDraft[shopId] = cfgDraft[shopId] || { settings: { ...(cfg.settings || {}) }, rates: (cfg.rates || []).map((r) => ({ amount: r.amount, minutes: r.minutes })),
+  sw: cfg.switches ? Object.fromEntries(SWITCH_EDIT.map((k) => [k, cfg.switches[k]])) : null });
 function cfgErrors(d) {
   const e = [], isInt = (v) => Number.isInteger(Number(v)) && String(v).trim() !== "";
   for (const [k, label, kind, lo, hi] of SETTING_FIELDS) {
     const v = d.settings[k];
     if (kind === "text" && !(String(v || "").trim().length >= lo && String(v).trim().length <= hi)) e.push(`${label}: ${lo} hanggang ${hi} na letra.`);
     if (kind === "number" && !(isInt(v) && Number(v) >= lo && Number(v) <= hi)) e.push(`${label}: ${lo} hanggang ${hi}.`);
+  }
+  if (d.sw) {
+    if (!(isInt(d.sw.maxPhp) && Number(d.sw.maxPhp) >= 1 && Number(d.sw.maxPhp) <= 5000)) e.push("Approve: pinakamalaking halaga bawat request: ₱1 hanggang ₱5,000.");
+    if (!(isInt(d.sw.dailyPhp) && Number(d.sw.dailyPhp) >= 1 && Number(d.sw.dailyPhp) <= 50000)) e.push("Approve: limit bawat araw: ₱1 hanggang ₱50,000.");
   }
   if (!d.rates.length || d.rates.length > 20) e.push("Mga rate: 1 hanggang 20.");
   const seen = new Set();
@@ -756,6 +762,11 @@ const shown = (k, v) => (typeof v === "boolean" ? (v ? "Oo" : "Hindi") : ((VALUE
 function cfgChanges(old, d) {
   const out = [];
   for (const [k, label] of SETTING_FIELDS) { const a = (old.settings || {})[k], b = d.settings[k]; if (String(a) !== String(b)) out.push(`${label}: ${shown(k, a)} → ${shown(k, typeof a === "number" ? Number(b) : b)}`); }
+  const SW = { approve: "Approve mula sa phone", maxPhp: "Approve: pinakamalaki bawat request", dailyPhp: "Approve: limit bawat araw", accounts: "Mga account sa cloud", journal: "Journal sa cloud" };
+  if (d.sw && old.switches) for (const k of SWITCH_EDIT) {
+    const a = old.switches[k], b = typeof a === "boolean" ? !!d.sw[k] : Number(d.sw[k]);
+    if (a !== b) out.push(`${SW[k]}: ${typeof a === "boolean" ? `${a ? "Naka-on" : "Patay"} → ${b ? "Naka-on" : "Patay"}` : `₱${a} → ₱${b}`}`);
+  }
   const ra = JSON.stringify((old.rates || []).map((r) => [r.amount, r.minutes]).sort((x, y) => x[0] - y[0])), rb = JSON.stringify(d.rates.map((r) => [Number(r.amount), Number(r.minutes)]).sort((x, y) => x[0] - y[0]));
   if (ra !== rb) out.push("Mga rate: " + d.rates.map((r) => ({ a: Number(r.amount), m: Number(r.minutes) })).sort((x, y) => x.a - y.a).map((r) => `₱${r.a} = ${mins(r.m)}`).join(", "));
   return out;
@@ -778,6 +789,10 @@ async function saveConfig(s) {
   for (const [k, , kind] of SETTING_FIELDS) { const v = d.settings[k]; settings[k] = kind === "number" ? Number(v) : kind === "text" ? String(v).trim() : v; }
   const doc = { ...now, v: 1, version: now.version + 1, hubId: now.hubId || "", updatedAt: new Date().toISOString(), updatedBy: "dashboard", settings,     // ...now: the notes of the wallpaper, the GCash QR and the switches stay as they are
                 rates: d.rates.map((r) => ({ amount: Number(r.amount), minutes: Number(r.minutes) })) };
+  if (d.sw && now.switches && SWITCH_EDIT.some((k) => now.switches[k] !== (typeof now.switches[k] === "boolean" ? !!d.sw[k] : Number(d.sw[k])))) {      // a switch was changed: the next version of the notes, from the dashboard
+    doc.switches = { ...now.switches, approve: !!d.sw.approve, maxPhp: Number(d.sw.maxPhp), dailyPhp: Number(d.sw.dailyPhp), accounts: !!d.sw.accounts, journal: !!d.sw.journal,
+                     ver: (now.switches.ver || 0) + 1, by: "dashboard" };
+  }
   const name = `projects/${PROJECT}/databases/(default)/documents/shops/${s.shopId}/config/main`;
   const [r] = await post(`${STORE}/projects/${PROJECT}/databases/(default)/documents:commit`,
     JSON.stringify({ writes: [{ update: { name, fields: toFs(doc).mapValue.fields }, currentDocument: { updateTime: cur.updateTime } }] }),
@@ -804,8 +819,17 @@ function settleConfig() {
 }
 // What the PCs of the shop share besides the settings and rates (v0.9.88): the switches, the wallpaper and the GCash QR. Look only: it is changed
 // at a PC (Settings, Cloud), and the other PCs follow. The notes are in the same document the page already read (no extra read).
-function switchesBlock(c) {
+function switchesBlock(c, d) {
   const sw = c.switches, wp = c.wallpaper, gq = c.gcash, onoff = (v) => (v ? "Naka-on" : "Patay"), rows = [];
+  if (sw && d && d.sw) {                                                            // the owner may change them here (the right to edit itself is changed at a PC only)
+    const chk = (k, label) => { const b = el("input", { type: "checkbox", id: "sw_" + k }); b.checked = !!d.sw[k]; b.onchange = () => { d.sw[k] = b.checked; }; return el("label", { class: "cfgrow check" }, b, el("span", {}, label)); };
+    const num = (k, label) => { const i = el("input", { type: "number", id: "sw_" + k, value: d.sw[k] ?? "" }); i.oninput = () => { d.sw[k] = i.value; }; return el("label", { class: "cfgrow" }, el("span", {}, label), i); };
+    return el("section", { class: "block", id: "cfgSwitches" }, el("h2", {}, "Iba pang iisa para sa buong shop"),
+      el("div", { class: "cfggrid" }, chk("approve", "Approve mula sa phone"), num("maxPhp", "Pinakamalaki bawat request (₱)"), num("dailyPhp", "Limit bawat araw (₱)"),
+        chk("accounts", "Mga account sa cloud"), chk("journal", "Journal sa cloud"),
+        el("p", { class: "empty", style: "margin:0" }, `Pag-edit ng settings mula sa dashboard: ${onoff(sw.dashEdit)} (sa PC lang ito binabago). Wallpaper: ${wp && wp.has ? `Meron (${wp.kb} KB)` : "Wala"} · GCash QR: ${gq && gq.has ? `Meron (${gq.kb} KB)` : "Wala"} (ina-upload sa admin page ng PC).`)),
+      el("p", { class: "empty", style: "margin:8px 0 0" }, "Ang mga ito ay iisa para sa lahat ng PC ng shop. Ipatutupad ng mga PC sa loob ng mga 1 hanggang 10 minuto."));
+  }
   if (sw) {
     rows.push(["Approve mula sa phone", sw.approve ? `Naka-on · hanggang ${peso(sw.maxPhp)} bawat request · ${peso(sw.dailyPhp)} bawat araw` : "Patay"]);
     rows.push(["Pag-edit ng settings mula sa dashboard", onoff(sw.dashEdit)], ["Mga account sa cloud", onoff(sw.accounts)], ["Journal sa cloud", onoff(sw.journal)]);
@@ -870,7 +894,7 @@ function settingsBlock(s, branch) {
     el("section", { class: "block" }, el("h2", {}, "Mga rate"), rateRows, el("div", { style: "margin-top:10px" }, add),
       el("p", { class: "empty", style: "margin:8px 0 0" }, "Bayad: ₱1 hanggang ₱10,000. Oras: 1 hanggang 100,000 minuto. Hanggang 20 rate, walang parehong bayad.")),
     el("section", { class: "block" }, el("h2", {}, "Settings"), el("div", { class: "cfggrid" }, SETTING_FIELDS.map(([k, label, kind]) => field(k, label, kind))))),
-    switchesBlock(c),
+    switchesBlock(c, d),
     el("div", { style: "display:flex;gap:8px;flex-wrap:wrap" }, save, undo));
 }
 
