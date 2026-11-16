@@ -808,6 +808,93 @@ async function saveConfig(s) {
   cfgCache[s.shopId] = { cfg: doc, ut: "" };
   fastUntil = Date.now() + 90000; draw(); clearTimeout(timer); timer = setTimeout(poll, 2500);
 }
+// ----- The shop's pictures from the dashboard (v0.9.91): the wallpaper of the lock screen and the GCash QR -----
+// The picture is shrunk HERE (the PCs are old: at most 1920 x 1080 and 650 KB, like the admin page does). Two documents are written
+// together: config/<name> (the picture) and the notes in config/main. The Hubs take it only while the owner allowed the dashboard to
+// change things (the same switch as the settings), and the page says so when it is off.
+const PIC_LIMIT = 650000, DIM_TEXT = ["Walang dilim", "Kaunti", "Katamtaman", "Madilim"];
+const picMsg = {};
+function shrinkPicture(file) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file), img = new Image();
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      const W = 1920, H = 1080, scale = Math.max(W / img.width, H / img.height);
+      let cw = img.width, ch = img.height, sx = 0, sy = 0, sw = img.width, sh = img.height;
+      if (scale < 1) { cw = W; ch = H; const k = 1 / scale; sw = W * k; sh = H * k; sx = (img.width - sw) / 2; sy = (img.height - sh) / 2; }
+      const canvas = document.createElement("canvas"); canvas.width = cw; canvas.height = ch;
+      canvas.getContext("2d").drawImage(img, sx, sy, sw, sh, 0, 0, cw, ch);
+      const tries = [0.82, 0.7, 0.6, 0.5, 0.4, 0.3];
+      const next = (i) => canvas.toBlob((blob) => {
+        if (!blob) return reject(new Error("Hindi mabasa ang larawan."));
+        if (blob.size <= PIC_LIMIT) return resolve({ blob, ext: "jpg", w: cw, h: ch });
+        if (i === tries.length - 1) return reject(new Error("Masyadong kumplikado ang larawan. Pumili ng mas simple."));
+        next(i + 1);
+      }, "image/jpeg", tries[i]);
+      next(0);
+    };
+    img.onerror = () => reject(new Error("Hindi mabasa ang larawan. JPG, PNG, o WebP lang."));
+    img.src = url;
+  });
+}
+const blobBase64 = (blob) => new Promise((res) => { const r = new FileReader(); r.onload = () => res(String(r.result).split(",")[1]); r.readAsDataURL(blob); });
+async function savePicture(s, field, change) {                 // change: {blob, ext} | {remove: true} | {dim: n}
+  const name = `projects/${PROJECT}/databases/(default)/documents/shops/${s.shopId}/config/`;
+  const [r0, cur] = await get(`${STORE}/${docUrl(s.shopId)}/config/main`);
+  if (!r0.ok) { picMsg[field] = { bad: "Hindi makuha ang kasalukuyang settings mula sa cloud. Subukan ulit." }; draw(); return; }
+  const now = fromFs({ mapValue: { fields: cur.fields } }), old = now[field] || {}, at = new Date().toISOString();
+  const notes = { ...old, version: (old.version || 0) + 1, by: "dashboard" }, writes = [];
+  if (change.blob) {
+    notes.img = (old.img || 0) + 1; notes.has = true; notes.ext = change.ext; notes.kb = Math.round(change.blob.size / 1024);
+    const img = { v: 1, version: notes.img, hubId: "", updatedAt: at, ext: change.ext, data: await blobBase64(change.blob) };
+    writes.push({ update: { name: name + field, fields: toFs(img).mapValue.fields } });
+  } else if (change.remove) { notes.img = (old.img || 0) + 1; notes.has = false; notes.ext = ""; notes.kb = 0; }
+  else notes.dim = change.dim;
+  if (field === "wallpaper" && notes.dim == null) notes.dim = 2;
+  const doc = { ...now, version: now.version + 1, updatedAt: at, updatedBy: "dashboard", [field]: notes };
+  writes.push({ update: { name: name + "main", fields: toFs(doc).mapValue.fields }, currentDocument: { updateTime: cur.updateTime } });
+  const [r] = await post(`${STORE}/projects/${PROJECT}/databases/(default)/documents:commit`, JSON.stringify({ writes }), { "Content-Type": "application/json", Authorization: "Bearer " + idToken });
+  if (!r.ok) {
+    picMsg[field] = { bad: r.status === 403 ? "Hindi pinayagan ng cloud. Tingnan kung napa-publish na ang bagong Firestore Rules." : "May nagbago habang sine-save. Pindutin ang I-refresh at ulitin." };
+    cfgCache = {}; draw(); return;
+  }
+  for (const m of s.members || [s]) {
+    fetch(`${RTDB}/cfgwake/${uid}/${m.shopId}.json?auth=${encodeURIComponent(idToken)}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ at: { ".sv": "timestamp" } }) }).catch(() => {});
+  }
+  picMsg[field] = { ok: s.cfgEdit === true ? "Naipadala. Ipatutupad ito ng mga PC sa loob ng mga 1 hanggang 10 minuto." : "Naipadala, pero naka-off ang pag-edit mula sa dashboard sa mga PC, kaya hindi nila ito tatanggapin. I-on ito sa admin page ng PC (Settings, Cloud)." };
+  cfgCache[s.shopId] = { cfg: doc, ut: "" };
+  fastUntil = Date.now() + 90000; draw(); clearTimeout(timer); timer = setTimeout(poll, 2500);
+}
+function pictureControls(s, c, field, label, hint) {
+  const notes = c[field] || {}, m = picMsg[field] || {}, id = field === "wallpaper" ? "wp" : "qr";
+  const file = el("input", { type: "file", id: id + "File", accept: field === "wallpaper" ? "image/jpeg,image/png,image/webp" : "image/png,image/jpeg" });
+  const msg = el("p", { class: m.bad ? "notice warn" : "empty", id: id + "Msg", style: "margin:6px 0 0" }, m.bad || m.ok || "");
+  const save = el("button", { type: "button", id: id + "Save", class: "primary" }, "I-upload"); save.disabled = true;
+  let chosen = null;
+  file.onchange = async () => {
+    chosen = null; save.disabled = true;
+    const f = file.files[0]; if (!f) return;
+    try {
+      if (field === "wallpaper") { const r = await shrinkPicture(f); chosen = { blob: r.blob, ext: r.ext }; msg.textContent = `Handa na: ${r.w} × ${r.h}, ${Math.round(r.blob.size / 1024)} KB. Pindutin ang I-upload.`; }
+      else {
+        const ext = f.type === "image/png" ? "png" : f.type === "image/jpeg" ? "jpg" : "";
+        if (!ext) throw new Error("PNG o JPG lang ang puwede.");
+        if (f.size > PIC_LIMIT) throw new Error("Masyadong malaki ang larawan (hanggang 650 KB).");
+        chosen = { blob: f, ext }; msg.textContent = `Handa na: ${Math.round(f.size / 1024)} KB. Pindutin ang I-upload.`;
+      }
+      msg.className = "empty"; save.disabled = false;
+    } catch (e) { msg.className = "notice warn"; msg.textContent = e.message; }
+  };
+  save.onclick = () => { if (chosen) { save.disabled = true; savePicture(s, field, chosen); } };
+  const remove = el("button", { type: "button", id: id + "Remove", class: "btn-no" }, "Alisin"); remove.disabled = !notes.has;
+  remove.onclick = () => { if (confirm(`Alisin ang ${label}? Mawawala ito sa lahat ng PC ng shop.`)) savePicture(s, field, { remove: true }); };
+  const dim = field === "wallpaper" ? el("label", { class: "cfgrow" }, el("span", {}, "Dilim sa ibabaw ng larawan"),
+    (() => { const sel = el("select", { id: "wpDim" }, ...DIM_TEXT.map((t, i) => el("option", { value: String(i) }, t))); sel.value = String(notes.dim ?? 2); sel.onchange = () => savePicture(s, "wallpaper", { dim: Number(sel.value) }); return sel; })()) : null;
+  return el("div", { class: "cfggrid", style: "margin-top:14px;border-top:1px solid var(--line);padding-top:12px" },
+    el("div", {}, el("b", {}, label), el("span", { class: "empty", style: "margin-left:8px" }, notes.has ? `Meron (${notes.kb} KB)` : "Wala")),
+    el("div", { style: "display:flex;gap:8px;flex-wrap:wrap;align-items:center" }, file, save, remove), ...(dim ? [dim] : []),
+    el("p", { class: "empty", style: "margin:0" }, hint), msg);
+}
 // The Hub has the new version (its summary says so): the page reads the cloud's copy again, which shows what the Hub really kept.
 function settleConfig() {
   for (const [shopId, p] of Object.entries(cfgPending)) {
@@ -819,7 +906,7 @@ function settleConfig() {
 }
 // What the PCs of the shop share besides the settings and rates (v0.9.88): the switches, the wallpaper and the GCash QR. Look only: it is changed
 // at a PC (Settings, Cloud), and the other PCs follow. The notes are in the same document the page already read (no extra read).
-function switchesBlock(c, d) {
+function switchesBlock(c, d, s) {
   const sw = c.switches, wp = c.wallpaper, gq = c.gcash, onoff = (v) => (v ? "Naka-on" : "Patay"), rows = [];
   if (sw && d && d.sw) {                                                            // the owner may change them here (the right to edit itself is changed at a PC only)
     const chk = (k, label) => { const b = el("input", { type: "checkbox", id: "sw_" + k }); b.checked = !!d.sw[k]; b.onchange = () => { d.sw[k] = b.checked; }; return el("label", { class: "cfgrow check" }, b, el("span", {}, label)); };
@@ -827,7 +914,9 @@ function switchesBlock(c, d) {
     return el("section", { class: "block", id: "cfgSwitches" }, el("h2", {}, "Iba pang iisa para sa buong shop"),
       el("div", { class: "cfggrid" }, chk("approve", "Approve mula sa phone"), num("maxPhp", "Pinakamalaki bawat request (₱)"), num("dailyPhp", "Limit bawat araw (₱)"),
         chk("accounts", "Mga account sa cloud"), chk("journal", "Journal sa cloud"),
-        el("p", { class: "empty", style: "margin:0" }, `Pag-edit ng settings mula sa dashboard: ${onoff(sw.dashEdit)} (sa PC lang ito binabago). Wallpaper: ${wp && wp.has ? `Meron (${wp.kb} KB)` : "Wala"} · GCash QR: ${gq && gq.has ? `Meron (${gq.kb} KB)` : "Wala"} (ina-upload sa admin page ng PC).`)),
+        el("p", { class: "empty", style: "margin:0" }, `Pag-edit ng settings mula sa dashboard: ${onoff(sw.dashEdit)} (sa PC lang ito binabago).`)),
+      pictureControls(s, c, "wallpaper", "Wallpaper ng lock screen", "JPG, PNG o WebP. Pinapaliit dito sa 1920 × 1080 (hanggang 650 KB). Walang blur o animation. Ikaw ang may karapatang gumamit ng larawan."),
+      pictureControls(s, c, "gcash", "GCash QR", "PNG o JPG, hanggang 650 KB. Ipapakita ito sa lock screen ng mga PC."),
       el("p", { class: "empty", style: "margin:8px 0 0" }, "Ang mga ito ay iisa para sa lahat ng PC ng shop. Ipatutupad ng mga PC sa loob ng mga 1 hanggang 10 minuto."));
   }
   if (sw) {
@@ -894,7 +983,7 @@ function settingsBlock(s, branch) {
     el("section", { class: "block" }, el("h2", {}, "Mga rate"), rateRows, el("div", { style: "margin-top:10px" }, add),
       el("p", { class: "empty", style: "margin:8px 0 0" }, "Bayad: ₱1 hanggang ₱10,000. Oras: 1 hanggang 100,000 minuto. Hanggang 20 rate, walang parehong bayad.")),
     el("section", { class: "block" }, el("h2", {}, "Settings"), el("div", { class: "cfggrid" }, SETTING_FIELDS.map(([k, label, kind]) => field(k, label, kind))))),
-    switchesBlock(c, d),
+    switchesBlock(c, d, s),
     el("div", { style: "display:flex;gap:8px;flex-wrap:wrap" }, save, undo));
 }
 
