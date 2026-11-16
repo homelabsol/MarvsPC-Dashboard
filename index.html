@@ -802,6 +802,20 @@ function settleConfig() {
     notice = { text: s.configVersion > p.v ? "Ipinatupad ng Hub ang karamihan, pero may mga halaga na tinanggihan nito. Tingnan ang bagong halaga sa ibaba." : "✓ Naipatupad na ng Hub ang mga pagbabago.", until: Date.now() + 12000 };
   }
 }
+// What the PCs of the shop share besides the settings and rates (v0.9.88): the switches, the wallpaper and the GCash QR. Look only: it is changed
+// at a PC (Settings, Cloud), and the other PCs follow. The notes are in the same document the page already read (no extra read).
+function switchesBlock(c) {
+  const sw = c.switches, wp = c.wallpaper, gq = c.gcash, onoff = (v) => (v ? "Naka-on" : "Patay"), rows = [];
+  if (sw) {
+    rows.push(["Approve mula sa phone", sw.approve ? `Naka-on · hanggang ${peso(sw.maxPhp)} bawat request · ${peso(sw.dailyPhp)} bawat araw` : "Patay"]);
+    rows.push(["Pag-edit ng settings mula sa dashboard", onoff(sw.dashEdit)], ["Mga account sa cloud", onoff(sw.accounts)], ["Journal sa cloud", onoff(sw.journal)]);
+  }
+  rows.push(["Wallpaper ng lock screen", wp && wp.has ? `Meron (${wp.kb} KB)` : "Wala"], ["GCash QR", gq && gq.has ? `Meron (${gq.kb} KB)` : "Wala"]);
+  return el("section", { class: "block", id: "cfgSwitches" }, el("h2", {}, "Iba pang iisa para sa buong shop"),
+    el("table", {}, el("tbody", {}, ...rows.map(([k, v]) => el("tr", {}, el("td", { style: "white-space:normal" }, k), el("td", { style: "white-space:normal" }, v))))),
+    el("p", { class: "empty", style: "margin:8px 0 0" }, sw ? "Pagtingin lang. Baguhin sa admin page ng kahit anong PC (Settings, Cloud); susunod ang ibang PC sa loob ng mga 10 minuto."
+      : "Hindi pa naipapadala ng mga PC ang mga switch. I-update ang mga PC (v0.9.88 pataas)."));
+}
 function settingsBlock(s, branch) {
   const st = cfgCache[s.shopId], title = el("h2", {}, branch ? `Settings at rates: ${branch}` : "Settings at rates");
   if (!st) {
@@ -830,7 +844,7 @@ function settingsBlock(s, branch) {
     for (const [k, v] of Object.entries(c.settings || {})) sets.append(el("tr", {}, el("td", { style: "white-space:normal" }, SETTING_LABELS[k] || k), el("td", { style: "white-space:normal" }, shown(k, v))));
     return el("div", { class: "page" }, head, el("div", { class: "two" },
       el("section", { class: "block" }, el("h2", {}, "Mga rate"), el("table", {}, el("thead", {}, el("tr", {}, el("th", {}, "Bayad"), el("th", { class: "num" }, "Oras na makukuha"))), rates)),
-      el("section", { class: "block", style: "overflow-x:auto" }, el("h2", {}, "Settings"), el("table", {}, el("thead", {}, el("tr", {}, el("th", {}, "Setting"), el("th", {}, "Halaga"))), sets))));
+      el("section", { class: "block", style: "overflow-x:auto" }, el("h2", {}, "Settings"), el("table", {}, el("thead", {}, el("tr", {}, el("th", {}, "Setting"), el("th", {}, "Halaga"))), sets))), switchesBlock(c));
   }
   const d = draftOf(s.shopId, c), field = (k, label, kind) => {
     const id = "cfg_" + k;
@@ -856,6 +870,7 @@ function settingsBlock(s, branch) {
     el("section", { class: "block" }, el("h2", {}, "Mga rate"), rateRows, el("div", { style: "margin-top:10px" }, add),
       el("p", { class: "empty", style: "margin:8px 0 0" }, "Bayad: ₱1 hanggang ₱10,000. Oras: 1 hanggang 100,000 minuto. Hanggang 20 rate, walang parehong bayad.")),
     el("section", { class: "block" }, el("h2", {}, "Settings"), el("div", { class: "cfggrid" }, SETTING_FIELDS.map(([k, label, kind]) => field(k, label, kind))))),
+    switchesBlock(c),
     el("div", { style: "display:flex;gap:8px;flex-wrap:wrap" }, save, undo));
 }
 
