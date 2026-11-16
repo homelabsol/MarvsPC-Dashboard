@@ -96,7 +96,7 @@
     <div class="cards" id="cards"></div>
     <section class="panel" id="usage" style="padding:20px 24px">
       <div class="flex" style="justify-content:space-between;align-items:flex-start">
-        <div><h2 style="font-size:17px">Paggamit ng Firebase ngayon</h2><p class="note" id="useSub" style="margin-top:4px"></p></div>
+        <div><h2 style="font-size:17px">Paggamit ng Firebase (tantiya)</h2><p class="note" id="useSub" style="margin-top:4px"></p></div>
         <div class="flex" id="useActs"></div>
       </div>
       <div id="useBody" style="margin-top:14px"></div>
@@ -233,6 +233,7 @@ async function listAll(collection) {
 async function load() {
   try { [keys, shops] = await Promise.all([listAll("licenseKeys"), listAll("shops")]); }
   catch (e) { if (e.message === "denied") return leave("Hindi ito main admin account."); say("#msg", e.message, "err"); return; }
+  drawUsage();
   fetchedAt = new Date(); $("#fetched").textContent = "Huling refresh: " + fetchedAt.toLocaleTimeString("fil-PH", { hour: "numeric", minute: "2-digit" });
   draw();
 }
@@ -403,11 +404,80 @@ function pacificStart(ms) {                               // the start of the Pa
 function resetAtText(startMs) {
   return new Date(startMs + 86400000).toLocaleTimeString("fil-PH", { hour: "numeric", minute: "2-digit", timeZone: "Asia/Manila" });
 }
+const LIMITS = { reads: 50000, writes: 20000 };
+const JOBS = { summary: "Buod ng shop (para sa dashboard)", config: "Settings at rates", log: "Log (mahahalagang tala)", journal: "Journal ng balance",
+  accounts: "Mga account at balance", sales: "Benta (araw at buwan)", license: "Lisensya", other: "Iba pa (pagsali, pagbalik)" };
+const pacificDay = (ms) => new Intl.DateTimeFormat("en-CA", { timeZone: "America/Los_Angeles" }).format(ms);
+const num = (n) => Math.round(n).toLocaleString("en-US");
+let exact = { r: "", w: "" };
+function usageNow(now) {                                    // what the Hubs say they used: today (Pacific day) by job and by shop, and the last 24 hours
+  const day = pacificDay(now), hourNow = Math.floor(now / 3600000);
+  const t = { r: 0, w: 0, x: 0 }, jobs = {}, per = new Map(), h24 = { r: 0, w: 0, x: 0 }; let none = 0, idle = 0, used = 0;
+  for (const sh of shops) {
+    const key = sh.groupId || sh.shopId || sh.id, m = sh.meter;
+    const g = per.get(key) || { name: sh.shopName || key, hubs: 0, r: 0, w: 0, x: 0, at: "" }; g.hubs++; per.set(key, g);
+    if (!m || !m.by) { none++; continue; }
+    if ((m.at || "") > g.at) g.at = m.at;
+    for (const [h, v] of Object.entries(m.hours || {})) if (Number(h) > hourNow - 24) { h24.r += v[0]; h24.w += v[1]; h24.x += v[2]; }
+    if (m.day !== day) { idle++; continue; }
+    used++;
+    for (const [job, v] of Object.entries(m.by)) {
+      const j = jobs[job] = jobs[job] || { r: 0, w: 0, x: 0, q: 0 };
+      j.r += v[0]; j.w += v[1]; j.x += v[2]; j.q += v[3]; g.r += v[0]; g.w += v[1]; g.x += v[2]; t.r += v[0]; t.w += v[1]; t.x += v[2];
+    }
+  }
+  return { day, t, jobs, per: [...per.values()], h24, none, idle, used };
+}
+function useBar(label, value, limit) {
+  const pct = Math.min(100, value / limit * 100), cls = pct >= 90 ? "r" : pct >= 70 ? "y" : "g";
+  return el("div", { class: "meter" }, el("div", { class: "muted" }, label),
+    el("div", {}, el("span", { class: "big" }, "mga " + num(value)), el("span", { class: "of" }, ` sa ${num(limit)} · ${pct < 1 && value ? "mas mababa sa 1" : Math.round(pct)}%`)),
+    el("div", { class: "bar" }, el("i", { class: cls, style: `width:${pct}%` })));
+}
 function drawUsage() {
-  const link = `https://console.firebase.google.com/project/${PROJECT}/firestore/databases/-default-/usage`;
-  $("#useSub").textContent = "Ang eksaktong bilang ng reads at writes ay nasa Firebase console. Hindi ito mababasa ng pahinang ito nang libre.";
-  $("#useActs").replaceChildren(el("a", { class: "btn main", id: "useLink", href: link, target: "_blank", rel: "noopener" }, "Buksan ang Usage sa Firebase"));
-  $("#useBody").replaceChildren(el("p", { class: "note", id: "useReset" }, `Libreng limitasyon bawat araw: 50,000 reads at 20,000 writes. Nagre-reset ito ngayong ${resetAtText(pacificStart(Date.now()))} (oras ng Pilipinas).`));
+  const link = `https://console.firebase.google.com/project/${PROJECT}/firestore/databases/-default-/usage`, now = Date.now(), u = usageNow(now);
+  $("#useSub").textContent = "Tantiya mula sa mga Hub, hindi eksakto. Ang eksaktong bilang ay nasa Firebase console.";
+  $("#useActs").replaceChildren(el("a", { class: "btn", id: "useLink", href: link, target: "_blank", rel: "noopener" }, "Buksan ang Usage sa Firebase"));
+  const body = $("#useBody"); body.replaceChildren();
+  body.append(el("div", { class: "cards", id: "useBars", style: "grid-template-columns:repeat(2,minmax(0,1fr))" },
+    useBar("Reads ngayong araw (tantiya: mga Hub + dagdag ng Rules)", u.t.r + u.t.x, LIMITS.reads),
+    useBar("Writes ngayong araw (tantiya: mga Hub)", u.t.w, LIMITS.writes)));
+  const cover = [`Ngayong araw sa Pacific time (${u.day}); nagre-reset ng ${resetAtText(pacificStart(now))} sa oras ng Pilipinas.`, `Mula sa ${u.used} Hub.`];
+  if (u.none) cover.push(`${u.none} Hub ang wala pang metro (lumang bersyon ng program).`);
+  if (u.idle) cover.push(`${u.idle} Hub ang hindi pa nagpapadala ngayong araw.`);
+  body.append(el("p", { class: "note", id: "useCover", style: "margin-top:10px" }, cover.join(" ")));
+  const table = (id, head, rows) => {
+    const box = el("div", { class: "scroll", id, style: "margin-top:14px" });
+    const t = el("table", { style: "width:100%;border-collapse:collapse;font-size:13.5px" });
+    const line = (cells, bold) => el("tr", {}, ...cells.map((c, n) => el(bold ? "th" : "td", { style: `padding:7px 10px;border-bottom:1px solid var(--line);text-align:${n ? "right" : "left"};${bold ? "font-size:12px;color:var(--muted);text-transform:uppercase" : ""}` }, c)));
+    t.append(line(head, true), ...rows.map((r) => line(r))); box.append(t); return box;
+  };
+  const jobRows = Object.entries(u.jobs).sort((a, b) => (b[1].r + b[1].x + b[1].w) - (a[1].r + a[1].x + a[1].w))
+    .map(([k, v]) => [JOBS[k] || k, num(v.r), num(v.x), num(v.w), num(v.q)]);
+  body.append(el("h3", { style: "margin:18px 0 0;font-size:15px" }, "Bawat gawain (lahat ng shop)"),
+    table("useJobs", ["Gawain", "Reads", "Dagdag ng Rules (tantiya)", "Writes", "Tawag"], jobRows.length ? jobRows : [["Wala pang bilang ngayong araw.", "", "", "", ""]]));
+  const shopRows = u.per.sort((a, b) => (b.r + b.x + b.w) - (a.r + a.x + a.w))
+    .map((g) => [g.name + (g.hubs > 1 ? ` (${g.hubs} Hub)` : ""), num(g.r + g.x), num(g.w), g.at ? ago(g.at) : "wala pa"]);
+  body.append(el("h3", { style: "margin:18px 0 0;font-size:15px" }, "Bawat shop"),
+    table("useShops", ["Shop", "Reads (tantiya)", "Writes", "Huling ipinadala"], shopRows.length ? shopRows : [["Wala pang shop.", "", "", ""]]));
+  const rec = el("div", { id: "useRec", style: "margin-top:18px" });
+  const inR = el("input", { id: "exR", type: "number", min: "0", placeholder: "Reads", value: exact.r, style: "max-width:160px" });
+  const inW = el("input", { id: "exW", type: "number", min: "0", placeholder: "Writes", value: exact.w, style: "max-width:160px" });
+  const out = el("div", { id: "exOut", class: "note", style: "margin-top:10px" });
+  const compare = () => {
+    exact = { r: inR.value, w: inW.value };
+    if (exact.r === "" && exact.w === "") { out.textContent = ""; return; }
+    const lines = [];
+    if (exact.r !== "") { const est = u.h24.r + u.h24.x, ex = Number(exact.r); lines.push(`Reads: eksakto ${num(ex)}, tantiya mula sa mga Hub ${num(est)}, hindi nabilang ${num(ex - est)}${ex < est ? " (sobra ang tantiya)" : ""}.`); }
+    if (exact.w !== "") { const est = u.h24.w, ex = Number(exact.w); lines.push(`Writes: eksakto ${num(ex)}, tantiya mula sa mga Hub ${num(est)}, hindi nabilang ${num(ex - est)}${ex < est ? " (sobra ang tantiya)" : ""}.`); }
+    lines.push("Ang hindi nabilang ay galing sa mga dashboard ng owner, sa pahinang ito, at sa mga Hub na walang metro.");
+    out.replaceChildren(...lines.map((l) => el("div", {}, l)));
+  };
+  inR.oninput = inW.oninput = compare;
+  rec.append(el("h3", { style: "margin:0;font-size:15px" }, "Ihambing sa eksaktong bilang"),
+    el("p", { class: "note", style: "margin:4px 0 10px" }, "Sa Firebase, Usage, piliin ang Last 24 hours at ilagay ang Reads at Writes dito. Ihahambing ito sa huling 24 oras ng mga Hub."),
+    el("div", { class: "flex" }, inR, inW), out);
+  body.append(rec); compare();
 }
 try { localStorage.removeItem("marvspc_gclient"); } catch (e) { /* nothing saved */ }
 
