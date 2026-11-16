@@ -265,7 +265,20 @@ async function resume() {
 function leave() { localStorage.removeItem(RT); idToken = null; clearTimeout(timer); clearInterval(tick); $("#app").classList.add("hidden"); $("#loginBox").classList.remove("hidden"); }
 
 // ---- load the owner's shops (the filter on ownerUid is what the security rules require) ----
+// Firestore reads count against the free quota of ALL shops (one read per Hub each time), the Realtime Database does not. So the
+// Hub's "alive" signal carries a number (r) that moves when the Hub sends a new summary: while it has not moved for any Hub, the
+// page does not read Firestore again (it still looks at the signal, so a dead Hub shows up), except once every 5 minutes.
+let lastStamp = "", lastFull = 0;
+function aliveStamp() {
+  const ids = Object.keys(alive).sort();
+  return ids.length && ids.every((id) => alive[id] && alive[id].r) ? ids.map((id) => `${id}:${alive[id].r}`).join("|") : "";   // an older Hub sends no number: always read
+}
 async function load() {
+  await loadAlive();
+  const stamp = aliveStamp();
+  if (shops.length && stamp && stamp === lastStamp && Date.now() >= fastUntil && Date.now() - lastFull < 300000) {
+    fetchedAt = new Date(); settleDecisions(); settleConfig(); draw(); return;
+  }
   const q = { structuredQuery: { from: [{ collectionId: "shops" }], where: { fieldFilter: { field: { fieldPath: "ownerUid" }, op: "EQUAL", value: { stringValue: uid } } } } };
   let [r, d] = await post(`${STORE}/projects/${PROJECT}/databases/(default)/documents:runQuery`, JSON.stringify(q), { "Content-Type": "application/json", Authorization: "Bearer " + idToken });
   if (r.status === 401 && await resume()) {
@@ -274,8 +287,8 @@ async function load() {
   if (r.status === 401) return leave();
   if (r.status === 403) { $("#view").replaceChildren(el("p", { class: "block" }, "Hindi pa naka-activate ang account na ito. Sabihin sa MarvsPC na idagdag ito.")); return; }
   if (!r.ok) throw new Error("Hindi makuha ang data.");
-  const docs = d.filter((x) => x.document).map((x) => fromFs({ mapValue: { fields: x.document.fields } }));
-  await loadAlive();
+  const docs = d.filter((x) => x.document).map((x) => fromFs({ mapValue: { fields: x.document.fields } })).map(freshToday);
+  lastStamp = stamp; lastFull = Date.now();
   shops = groupShops(docs);
   shops.sort((a, b) => a.shopName.localeCompare(b.shopName));
   fetchedAt = new Date();
@@ -392,6 +405,15 @@ function kpi(icon, label, value) {
     el("span", { class: "ki", "aria-hidden": "true" }, svgIcon(ICON[icon] || "")));
 }
 function kpis(items, six) { return el("div", { class: "kpis" + (six ? " six" : "") }, items.map(([icon, label, value]) => kpi(icon, label, value))); }
+// A Hub that was switched off overnight still holds the numbers of its last day in its summary. Those are NOT today's: they
+// count as zero for today (the day is kept to be shown as that day), so the page never shows last night's sales as today's.
+function freshToday(d) {
+  const day = d.today && d.today.day;
+  if (!day || day === phToday()) return d;
+  const t = d.today;
+  return { ...d, stale: { day, today: t, detail: d.todayDetail || {} },
+    today: { income: 0, consumed: 0, cash: 0, gcash: 0, walkins: 0, loads: 0, minutes: 0, pending: t.pending || 0, accounts: t.accounts || 0 }, todayDetail: {} };
+}
 function online(s) { return s.pcs.filter((p) => p.status !== "offline").length; }
 
 function chart(week) {
@@ -475,21 +497,48 @@ function requestsBlock(s, branch) {
     el("table", {}, el("thead", {}, el("tr", {}, el("th", {}, "Oras"), el("th", {}, "Username"), el("th", {}, "Halaga"), el("th", {}, "Bayad"), el("th", {}, ""))), body));
 }
 function dayText(iso) { return iso ? new Date(iso).toLocaleDateString("fil-PH", { month: "short", day: "numeric" }) : "—"; }
+// The true balance of an account is the one in the cloud (every Hub adds to it); a Hub's own copy can be older. Read once for the
+// accounts on the page (one read each, kept for 5 minutes; I-refresh reads again). An account that is playing now shows the
+// exact clock of its PC.
+let accCloud = {};
+async function accountMinutes(shopId, users) {
+  const now = Date.now(), cache = accCloud[shopId] = accCloud[shopId] || {};
+  const need = users.filter((u) => !cache[u.toLowerCase()] || now - cache[u.toLowerCase()].at > 300000);
+  if (!need.length) return false;
+  const parent = `projects/${PROJECT}/databases/(default)/documents/data/${uid}/shops/${shopId}`;
+  const [r, d] = await post(`${STORE}/${parent.split("/documents/")[0]}/documents:batchGet`, JSON.stringify({ documents: need.map((u) => `${parent}/players/${u.toLowerCase()}`) }), { "Content-Type": "application/json", Authorization: "Bearer " + idToken });
+  if (!r.ok) return false;
+  for (const x of d) {
+    if (!x.found) continue;
+    const f = fromFs({ mapValue: { fields: x.found.fields } });
+    cache[String(f.username || x.found.name.split("/").pop()).toLowerCase()] = { m: Number(f.minutes) || 0, at: now };
+  }
+  for (const u of need) if (!cache[u.toLowerCase()]) cache[u.toLowerCase()] = { m: undefined, at: now };      // not in the cloud: keep the Hub's number
+  return true;
+}
 function accountsBlock(s, branch) {
   const body = el("tbody");
   const fill = (rows, searching) => {
     body.replaceChildren();
-    for (const a of rows) body.append(el("tr", {}, el("td", {}, el("b", {}, a.u)), el("td", {}, a.n || "—"), el("td", {}, dayText(a.c)),
-      el("td", {}, a.m === undefined ? "—" : mins(a.m)),
+    const cached = accCloud[s.shopId] || {};
+    for (const a of rows) {
+      const pc = (s.pcs || []).find((p) => p.status === "in_use" && p.endsAt && p.user && p.user.toLowerCase() === a.u.toLowerCase());
+      const c = cached[a.u.toLowerCase()], m = c && c.m !== undefined ? c.m : a.m;
+      body.append(el("tr", {}, el("td", {}, el("b", {}, a.u)), el("td", {}, a.n || "—"), el("td", {}, dayText(a.c)),
+      pc ? el("td", { "data-ends": pc.endsAt, title: "Naglalaro ngayon" }, clock(pc.endsAt - Date.now() / 1000)) : el("td", {}, m === undefined ? "—" : mins(m)),
       el("td", {}, a.w || a.weak ? el("span", { class: "pill p-maintenance" }, el("i"), "Mahina (4 digit)") : el("span", { class: "empty" }, "Maayos"))));
+    }
     if (!rows.length) body.append(el("tr", {}, el("td", { colspan: 5, class: "empty" }, searching ? "Walang nakita." : "Wala pang account.")));
   };
   fill(s.recent || [], false);
+  accountMinutes(s.shopId, (s.recent || []).map((a) => a.u)).then((changed) => { if (changed && body.isConnected && !searchedNow) fill(s.recent || [], false); }).catch(() => {});
+  let searchedNow = false;
   const msg = el("p", { class: "empty", style: "margin:8px 0 0" });
   const q = el("input", { type: "search", placeholder: "Hanapin ang username", maxlength: "20", "aria-label": "Hanapin ang username", style: "max-width:240px" });
   const go = el("button", { type: "button" }, "Hanapin");
   const run = async () => {
     const text = q.value.trim().toLowerCase();
+    searchedNow = !!text;
     if (!text) { fill(s.recent || [], false); msg.textContent = ""; return; }
     msg.textContent = "Sandali…";
     try { fill(await searchAccounts(s.shopId, text), true); msg.textContent = "Mga resulta ng paghahanap (hanggang 20)."; }
@@ -512,7 +561,7 @@ async function searchAccounts(shopId, prefix) {
     orderBy: [{ field: { fieldPath: "__name__" }, direction: "ASCENDING" }] } };
   const [r, d] = await post(`${STORE}/${parent}:runQuery`, JSON.stringify(q), { "Content-Type": "application/json", Authorization: "Bearer " + idToken });
   if (!r.ok) throw new Error("search");
-  return d.filter((x) => x.document).map((x) => { const f = fromFs({ mapValue: { fields: x.document.fields } }); return { u: f.username, n: f.fullName, c: f.createdAt, weak: f.weak }; });
+  return d.filter((x) => x.document).map((x) => { const f = fromFs({ mapValue: { fields: x.document.fields } }); return { u: f.username, n: f.fullName, c: f.createdAt, weak: f.weak, m: Number.isFinite(Number(f.minutes)) ? Number(f.minutes) : undefined }; });
 }
 // ----- The pages (chosen from the menu on the left; the address says which: #/dashboard, #/requests, #/accounts, #/sales) -----
 const SECTIONS = [
@@ -871,7 +920,8 @@ function addInto(a, b) {
 }
 const norm = (d) => Object.assign(blank(d.date), d, { pcs: d.pcs || [], staff: d.staff || [], acc: d.acc || [], walk: d.walk || blank("").walk, more: d.more || blank("").more, hours: d.hours && d.hours.length === 24 ? d.hours : new Array(24).fill(0) });
 function todayRow(s) { return (s.members || [s]).reduce((a, m) => addInto(a, todayRowOf(m)), blank(phToday())); }
-function todayRowOf(s) { const t = s.today || {}, x = s.todayDetail || {}; return norm({ date: phToday(), income: t.income || 0, cash: t.cash || 0, gcash: t.gcash || 0, walkins: t.walkins || 0, loads: t.loads || 0, minutes: t.minutes || 0, consumed: t.consumed || 0, pcs: x.pcs, hours: x.hours, staff: x.staff, acc: x.acc, walk: x.walk, more: x.more }); }
+function todayRowOf(s) { return rowFrom(phToday(), s.today || {}, s.todayDetail || {}); }
+function rowFrom(date, t, x) { return norm({ date, income: t.income || 0, cash: t.cash || 0, gcash: t.gcash || 0, walkins: t.walkins || 0, loads: t.loads || 0, minutes: t.minutes || 0, consumed: t.consumed || 0, pcs: x.pcs, hours: x.hours, staff: x.staff, acc: x.acc, walk: x.walk, more: x.more }); }
 const withBranch = (rows, s) => (current === "all" && shops.length > 1)
   ? rows.map((r) => ({ ...r, pcs: (r.pcs || []).map((p) => ({ ...p, n: `${s.shopName} · ${p.n}` })) })) : rows;
 // The rows of a range for one branch: the finished part from the cloud (cached: a finished day does not change), plus today.
@@ -910,6 +960,12 @@ async function loadRange(r) {
     const pr = await pastRows(s, r);
     partial = partial || pr.partial;
     let rows = withBranch(pr.rows.map((x) => addInto(blank(x.date), x)), s);       // a copy: today is added to it, and the cache must stay as read
+    if (r.by === "day") {                                // the last day of a Hub that was off since: its document is written when it starts again; until then show its last summary as that day
+      for (const m of s.members || [s]) {
+        const st = m.stale;
+        if (st && st.day >= r.from && st.day <= r.to && st.day < today && !(await pastRowsOf(m.shopId, r)).rows.some((x) => x.date === st.day)) rows = rows.concat(withBranch([rowFrom(st.day, st.today, st.detail)], s));
+      }
+    }
     if (r.by === "day" && r.from <= today && today <= r.to) rows = rows.concat(withBranch([todayRow(s)], s));
     if (r.by === "month" && r.to.slice(0, 7) === today.slice(0, 7)) {              // this month: its finished days (one row, from above) plus today
       const key = today.slice(0, 7), t = withBranch([todayRow(s)], s)[0], f = rows.find((x) => x.date === key);
@@ -1124,7 +1180,7 @@ $("#loginForm").addEventListener("submit", async (ev) => {
   catch (e) { $("#loginMsg").textContent = e.message; }
 });
 $("#logout").addEventListener("click", leave);
-$("#refresh").addEventListener("click", () => { logCache = {}; cfgCache = {}; cfgDraft = {}; cfgMsg = {}; salesCache = {}; salesState = { key: "", data: null, prev: null, busy: false, error: "", note: "" }; load().catch(() => {}); });
+$("#refresh").addEventListener("click", () => { lastStamp = ""; accCloud = {}; logCache = {}; cfgCache = {}; cfgDraft = {}; cfgMsg = {}; salesCache = {}; salesState = { key: "", data: null, prev: null, busy: false, error: "", note: "" }; load().catch(() => {}); });
 (async () => { if (await resume()) { $("#who").textContent = "naka-login"; open(); } else $("#loginBox").classList.remove("hidden"); })();
 </script>
 </body>
