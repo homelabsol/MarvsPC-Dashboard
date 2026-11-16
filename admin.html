@@ -397,7 +397,7 @@ const MON = () => (TEST_API ? TEST_API + "/mon/v3" : "https://monitoring.googlea
 const GCLIENT = "marvspc_gclient", LIMITS = { reads: 50000, writes: 20000 };
 const METRICS = { reads: "firestore.googleapis.com/document/read_count", writes: "firestore.googleapis.com/document/write_count" };
 class GErr extends Error { constructor(code, extra) { super(code); this.code = code; this.extra = extra; } }
-let gTok = null, gTokUntil = 0, usage = { state: "init" }, usageTimer = null;
+let gTok = null, gTokUntil = 0, usage = { state: "init" }, usageTimer = null, backFromGoogle = null;
 
 const LA = new Intl.DateTimeFormat("en-US", { timeZone: "America/Los_Angeles", hourCycle: "h23", hour: "2-digit", minute: "2-digit", second: "2-digit" });
 function pacificStart(ms) {                               // the start of the Pacific day that holds ms: Firestore's free quota resets there
@@ -415,26 +415,32 @@ function pacificDays(now) {                                // today and the 7 da
   return { today: { from: bounds[0], to: now }, days };
 }
 
-function loadGsi() {
-  return new Promise((res, rej) => {
-    if (window.google && google.accounts && google.accounts.oauth2) return res();
-    const s = document.createElement("script"); s.src = "https://accounts.google.com/gsi/client"; s.async = true;
-    s.onload = () => res(); s.onerror = () => rej(new GErr("gsi")); document.head.append(s);
-  });
-}
 const gClientId = () => (localStorage.getItem(GCLIENT) || "").trim();
-function signInGoogle() {                                  // must run from a click: Google opens a window, and the browser only allows that straight after the click
+const GSTATE = "marvspc_gstate", GSCOPE = "https://www.googleapis.com/auth/monitoring.read";
+const redirectUri = () => location.origin + location.pathname;      // this very page: it must be listed in the client's Authorized redirect URIs
+function googleAuthUrl(state) {
+  const q = new URLSearchParams({ client_id: gClientId(), redirect_uri: redirectUri(), response_type: "token", scope: GSCOPE, state, include_granted_scopes: "true", prompt: "select_account" });
+  return "https://accounts.google.com/o/oauth2/v2/auth?" + q;
+}
+function signInGoogle() {                                  // no popup: the whole page goes to Google and comes back with the answer in the address
   if (TEST_API) { gTok = "fake-google-token"; gTokUntil = Date.now() + 3300000; return Promise.resolve(gTok); }
   if (!gClientId()) return Promise.reject(new GErr("noid"));
-  const go = () => new Promise((res, rej) => {               // runs at once when the Google script is already loaded (it is preloaded when the panel opens)
-    const c = google.accounts.oauth2.initTokenClient({
-      client_id: gClientId(), scope: "https://www.googleapis.com/auth/monitoring.read",
-      callback: (r) => { if (r.error) return rej(new GErr(r.error, r.error_description)); gTok = r.access_token; gTokUntil = Date.now() + (Number(r.expires_in || 3600) - 120) * 1000; res(gTok); },
-      error_callback: (e) => rej(new GErr((e && e.type) || "popup_failed_to_open")),
-    });
-    c.requestAccessToken({ prompt: "" });
-  });
-  return window.google && google.accounts && google.accounts.oauth2 ? go() : loadGsi().then(go);
+  const b = new Uint8Array(16); crypto.getRandomValues(b);
+  const state = [...b].map((x) => x.toString(16).padStart(2, "0")).join("");
+  try { sessionStorage.setItem(GSTATE, state); } catch (e) { return Promise.reject(new GErr("storage")); }
+  location.assign(googleAuthUrl(state));
+  return new Promise(() => { /* the page is leaving */ });
+}
+function takeGoogleReturn() {                              // Google's answer arrives after the # of the address; read it once and wipe it
+  if (!/[#&](access_token|error)=/.test(location.hash)) return null;
+  const q = new URLSearchParams(location.hash.slice(1));
+  history.replaceState(null, "", location.pathname + location.search);
+  let want = ""; try { want = sessionStorage.getItem(GSTATE) || ""; sessionStorage.removeItem(GSTATE); } catch (e) { /* none */ }
+  if (!want || q.get("state") !== want) return { error: "state" };
+  if (q.get("error")) return { error: q.get("error") };
+  if (!(q.get("scope") || "").includes("monitoring.read")) return { error: "scope" };
+  gTok = q.get("access_token"); gTokUntil = Date.now() + (Number(q.get("expires_in") || 3600) - 120) * 1000;
+  return { token: true };
 }
 const haveToken = () => !!gTok && Date.now() < gTokUntil;
 
@@ -471,16 +477,16 @@ function hintFor(e) {
   const c = e.code, link = "https://console.cloud.google.com/apis/library/monitoring.googleapis.com?project=" + PROJECT;
   const H = {
     noid: "Ilagay muna ang Google Client ID.",
-    gsi: "Hindi na-load ang Google sign-in. Tingnan ang internet o ang ad blocker.",
+    state: "Hindi tumugma ang sagot ng Google sa hiningi ng page. Subukan ulit mag-sign in, sa iisang tab lang.",
+    scope: "Hindi napayagan ang pagbasa ng Monitoring. Sa pahina ng Google, i-check ang pahintulot na iyon bago Continue.",
+    storage: "Hindi makapag-save ang browser (sessionStorage). Huwag gamitin ang mahigpit na private mode.",
     access_denied: "Hindi pinayagan ng Google ang account na ito. Idagdag ang email sa Test users ng OAuth consent screen, at piliin ang tamang account.",
-    popup_closed: "Naisara ang bintana ng Google bago natapos. Subukan ulit.",
-    popup_failed_to_open: "Na-block ng browser ang bintana ng Google. Payagan ang popups sa site na ito.",
-    invalid_client: "Mali ang Client ID, o wala ang https://homelabsol.github.io sa Authorized JavaScript origins ng Client ID.",
+    invalid_client: "Mali ang Client ID.",
     expired: "Nag-expire na ang sign-in sa Google. Mag-sign in ulit.",
     mon_disabled: "Hindi pa naka-enable ang Cloud Monitoring API. Buksan ito at pindutin ang Enable: " + link,
     mon_403: "Walang pahintulot sa project ang Google account na ito. Gamitin ang account na may hawak ng Firebase project.",
   };
-  return H[c] || (c === "mon_other" ? `Hindi nabasa ang Cloud Monitoring (code ${e.extra}).` : `Hindi natuloy ang sign-in (${c}). Subukan ang koneksyon para makita ang hakbang na pumalya.`);
+  return H[c] || (c === "mon_other" ? `Hindi nabasa ang Cloud Monitoring (code ${e.extra}).` : `Hindi natuloy ang sign-in (${c}). Pindutin ang Subukan ang koneksyon.`);
 }
 
 function meter(label, key, d, lim) {
@@ -511,8 +517,8 @@ function drawUsage() {
   }
   if (!haveToken() && usage.state !== "error") usage = { state: usage.state === "init" || usage.state === "ok" ? "out" : usage.state };
   if (usage.state === "out" || usage.state === "init") {
-    if (!TEST_API) loadGsi().catch(() => { /* the test button says so */ });
     sub.textContent = "Mula sa Google (Cloud Monitoring). Mag-sign in para makita.";
+    body.append(el("p", { class: "note", id: "useUri" }, "Isang beses lang: ilagay ang address na ito sa Authorized redirect URIs ng Client ID sa Google Cloud: ", el("span", { class: "key" }, redirectUri())));
     acts.append(btn("Mag-sign in with Google", "gSign", connect, "main"), btn("Subukan ang koneksyon", "gTest", testConnection));
     return;
   }
@@ -538,11 +544,11 @@ async function refreshUsage() {
 async function connect() {
   const asked = signInGoogle();                              // first, straight from the click
   usage = { state: "loading" }; drawUsage();
-  try { await asked; } catch (e) { usage = { state: "error", error: e instanceof GErr ? e : new GErr("popup_failed_to_open") }; drawUsage(); return; }
+  try { await asked; } catch (e) { usage = { state: "error", error: e instanceof GErr ? e : new GErr("storage") }; drawUsage(); return; }
   await refreshUsage();
 }
 function signOutGoogle() {
-  try { if (gTok && window.google && google.accounts && google.accounts.oauth2) google.accounts.oauth2.revoke(gTok); } catch (e) { /* nothing to revoke */ }
+  if (gTok && !TEST_API) fetch("https://oauth2.googleapis.com/revoke?token=" + encodeURIComponent(gTok), { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" } }).catch(() => { /* nothing to revoke */ });
   gTok = null; usage = { state: "out" }; clearTimeout(usageTimer); drawUsage();
 }
 async function testConnection() {                         // says exactly which step fails, so nobody has to guess
@@ -550,11 +556,12 @@ async function testConnection() {                         // says exactly which 
   const line = (ok, text) => box.append(el("li", { class: ok ? "okk" : "no" }, (ok ? "OK · " : "PUMALPAK · ") + text));
   if (!gClientId() && !TEST_API) return line(false, "Walang Client ID. " + hintFor(new GErr("noid")));
   line(true, "May Client ID.");
-  try { if (!TEST_API) await loadGsi(); line(true, "Na-load ang Google sign-in."); } catch (e) { return line(false, hintFor(new GErr("gsi"))); }
-  try { if (!haveToken()) await signInGoogle(); line(true, "Pumayag ang Google account."); } catch (e) { return line(false, hintFor(e instanceof GErr ? e : new GErr("popup_failed_to_open"))); }
+  line(true, "Ang redirect URI na dapat nakalista sa Authorized redirect URIs ng Client ID: " + redirectUri());
+  if (!haveToken()) return line(false, "Wala pang sign-in sa Google. Pindutin ang Mag-sign in with Google; babalik ka rito pagkatapos.");
+  line(true, "May pahintulot mula sa Google account.");
   try { const n = await monitor(METRICS.reads, pacificStart(Date.now()), Date.now()); line(true, `Nabasa ang Cloud Monitoring (reads ngayon: ${n.toLocaleString("en-US")}).`); }
   catch (e) { return line(false, hintFor(e instanceof GErr ? e : new GErr("mon_other", String(e.message || e)))); }
-  line(true, "Handa na ang lahat. Pindutin ang Mag-sign in with Google o I-refresh.");
+  line(true, "Handa na ang lahat.");
 }
 
 // ---- making keys ----
@@ -594,6 +601,7 @@ $("#make").onclick = async () => {
 };
 
 // ---- start ----
+backFromGoogle = takeGoogleReturn();
 $("#find").oninput = draw;
 $("#refresh").onclick = () => load();
 $("#logout").onclick = () => leave("");
@@ -605,7 +613,11 @@ $("#loginForm").onsubmit = async (e) => {
 async function open() {
   if (!(await isAdmin())) return leave("Hindi ito main admin account.");
   $("#loginBox").classList.add("hidden"); $("#app").classList.remove("hidden");
-  preset(12); drawUsage(); await load();
+  preset(12);
+  if (backFromGoogle && backFromGoogle.error) usage = { state: "error", error: new GErr(backFromGoogle.error) };
+  drawUsage();
+  if (backFromGoogle && backFromGoogle.token) refreshUsage();
+  await load();
 }
 (async () => { if (await resume()) { $("#who").textContent = "naka-login"; await open(); } else $("#loginBox").classList.remove("hidden"); })();
 </script>
