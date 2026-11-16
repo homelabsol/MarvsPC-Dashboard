@@ -37,7 +37,7 @@
   .panel { background:var(--surface); border:1px solid var(--line); border-radius:12px; overflow:hidden; }
   .scroll { overflow-x:auto; }
   .grid { min-width:1080px; }
-  .row { display:grid; grid-template-columns:1.3fr 1.1fr 1.5fr 1.1fr .9fr 1.2fr .6fr .9fr; gap:12px; align-items:center; padding:14px 20px; border-bottom:1px solid var(--line); font-size:14px; cursor:pointer; }
+  .row { display:grid; grid-template-columns:minmax(0,1.3fr) minmax(0,1fr) minmax(0,1.4fr) minmax(0,1.2fr) minmax(0,1fr) minmax(0,1.7fr) minmax(0,.7fr) minmax(0,.9fr); gap:12px; align-items:center; padding:14px 20px; border-bottom:1px solid var(--line); font-size:14px; cursor:pointer; }
   .row.head { font-size:12px; font-weight:600; color:var(--muted); text-transform:uppercase; letter-spacing:.04em; background:#f9fafb; cursor:default; }
   .row.open { background:#f0f8f7; }
   .row:focus-visible { outline:3px solid #f5b82e; outline-offset:-3px; }
@@ -82,13 +82,14 @@
   <main>
     <div>
       <h1 style="font-size:24px">Mga shop at lisensya</h1>
-      <p class="note" style="margin-top:4px">Pindutin ang isang hilera para makita ang mga unit at ang mga opsyon (suspend, palawigin, dagdag unit).</p>
+      <p class="note" style="margin-top:4px">Pindutin ang isang owner para makita ang mga key at computer niya, at ang mga opsyon (suspend, palawigin, dagdag unit).</p>
     </div>
     <div class="cards" id="cards"></div>
     <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:space-between">
       <input id="find" placeholder="Hanapin ang owner, shop o key" aria-label="Hanapin ang owner, shop o key" style="max-width:320px">
       <p class="note" id="msg"></p>
     </div>
+    <div class="flex" id="chips"></div>
     <section class="panel"><div class="scroll"><div class="grid" id="table"></div></div></section>
 
     <section class="panel">
@@ -122,7 +123,7 @@ let AUTH = "https://identitytoolkit.googleapis.com/v1", TOKEN = "https://securet
 const $ = (s) => document.querySelector(s);
 const RT = "marvspc_admin_rt", DOCS = () => `${STORE}/projects/${PROJECT}/databases/(default)/documents`;
 const ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789", WARN_DAYS = 14;
-let idToken = null, uid = null, keys = [], shops = [], openKey = null, fetchedAt = null;
+let idToken = null, uid = null, keys = [], shops = [], fetchedAt = null;
 
 function el(tag, attrs, ...kids) {
   const e = document.createElement(tag);
@@ -232,36 +233,97 @@ function lastSeen(k, hubId) {
 }
 function accountsOf(k) { return Math.max(0, ...shopsOf(k).map((s) => Number((s.today || {}).accounts || 0))); }
 
+const PAGE = 20, RANK = { ok: 1, soon: 2, bad: 3 };
+let openOwner = null, openKey = null, filter = "all", shown = PAGE, unusedOpen = false;
+const usedOf = (k) => Object.keys(k.units || {}).length;
+const isUnused = (k) => !usedOf(k) && !k.owner;
+function ownersOf(list) {
+  const map = new Map();
+  for (const k of list) { if (isUnused(k)) continue; const g = map.get(k.owner) || { id: k.owner, keys: [] }; g.keys.push(k); map.set(k.owner, g); }
+  return [...map.values()].map((g) => {
+    const sts = g.keys.map(judge); let worst = sts[0];
+    for (const x of sts) if ((RANK[x.group] || 0) > (RANK[worst.group] || 0)) worst = x;
+    const units = g.keys.flatMap((k) => Object.keys(k.units || {}).map((h) => [k, h]));
+    const seen = units.map(([k, h]) => lastSeen(k, h)).filter(Boolean).sort().pop();
+    const first = g.keys[0];
+    return { ...g, st: worst, used: g.keys.reduce((n, k) => n + usedOf(k), 0), max: g.keys.reduce((n, k) => n + (k.max || 0), 0), to: g.keys.map((k) => k.to).sort()[0],
+      name: first.label || first.ownerEmail || "—", email: first.ownerEmail || "", shop: [...new Set(g.keys.map((k) => k.shop).filter(Boolean))].join(", "),
+      seen, accounts: Math.max(0, ...g.keys.map(accountsOf)) };
+  }).sort((a, b) => (a.to < b.to ? -1 : 1));
+}
+const matches = (k, q) => !q || [k.id, k.label, k.ownerEmail, k.shop].some((x) => String(x || "").toLowerCase().includes(q));
+
 function draw() {
   const groups = { ok: 0, soon: 0, bad: 0, unused: 0 }; let seats = 0, max = 0;
-  for (const k of keys) { groups[judge(k).group]++; seats += Object.keys(k.units || {}).length; max += k.max || 0; }
+  for (const k of keys) { groups[judge(k).group]++; if (!isUnused(k)) { seats += usedOf(k); max += k.max || 0; } }
   const card = (l, n, s) => el("div", { class: "card" }, el("div", { class: "l" }, l), el("div", { class: "n" }, n), el("div", { class: "s" }, s));
-  $("#cards").replaceChildren(card("Mga key", keys.length, `${seats} sa ${max} unit ang gamit · ${groups.unused} hindi pa ginagamit`), card("Active", groups.ok, "gumagamit na at may bisa pa"),
+  $("#cards").replaceChildren(card("Mga key", keys.length, `${seats} sa ${max} unit ang gamit · ${groups.unused} key ang hindi pa ginagamit`), card("Active", groups.ok, "gumagamit na at may bisa pa"),
     card("Malapit nang mag-expire", groups.soon, `${WARN_DAYS} araw o mas kaunti na lang`), card("Expired o Suspended", groups.bad, groups.bad ? "kailangang tingnan" : "walang problema"));
+  const tabs = [["all", "Lahat"], ["ok", "Active"], ["soon", "Malapit nang mag-expire"], ["bad", "Expired o Suspended"], ["unused", "Hindi pa ginagamit"]];
+  $("#chips").replaceChildren(...tabs.map(([f, t]) => {
+    const n = f === "all" ? keys.length : groups[f === "ok" ? "ok" : f];
+    const b = el("button", { type: "button", "data-f": f, class: filter === f ? "on" : "" }, `${t} (${n})`);
+    b.onclick = () => { filter = f; shown = PAGE; draw(); }; return b; }));
   const q = $("#find").value.trim().toLowerCase();
-  const list = keys.filter((k) => !q || [k.id, k.label, k.ownerEmail, k.shop].some((x) => String(x || "").toLowerCase().includes(q)))
-    .sort((a, b) => (a.to < b.to ? -1 : 1));
-  const rows = [el("div", { class: "row head" }, ...["Owner", "Shop", "License key", "Unit (gamit / max)", "Expiry", "Kalagayan", "Account ngayon", "Huling nakita"].map((t) => el("div", {}, t)))];
-  for (const k of list) {
-    const used = Object.keys(k.units || {}).length, st = judge(k);
-    const seen = Object.keys(k.units || {}).map((h) => lastSeen(k, h)).filter(Boolean).sort().pop();
-    const row = el("div", { class: "row" + (openKey === k.id ? " open" : ""), role: "button", tabindex: "0", "aria-expanded": String(openKey === k.id), "data-key": k.id },
-      el("div", {}, el("b", {}, k.label || k.ownerEmail || "—"), k.owner ? (k.label && k.ownerEmail ? el("div", { class: "muted", style: "font-size:12.5px" }, k.ownerEmail) : "") : el("div", { class: "muted", style: "font-size:12.5px" }, "Wala pang nag-activate")),
-      el("div", {}, k.shop || "—"), el("div", {}, el("span", { class: "key" }, k.id)),
-      el("div", {}, el("div", { style: "font-size:13px;font-weight:600" }, `${used} / ${k.max}` + (used >= k.max ? " · puno na" : "")),
-        el("div", { class: "bar" }, el("i", { class: used >= k.max ? "full" : "", style: `width:${k.max ? Math.min(100, Math.round(used * 100 / k.max)) : 0}%` }))),
-      el("div", {}, fmtDay(k.to)), el("div", {}, el("span", { class: "chip " + st.cls }, el("i"), st.text)),
-      el("div", {}, String(accountsOf(k))), el("div", { class: "muted" }, ago(seen)));
-    const toggle = () => { openKey = openKey === k.id ? null : k.id; draw(); };
-    row.onclick = toggle; row.onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(); } };
-    rows.push(row);
-    if (openKey === k.id) rows.push(detail(k));
+  const rows = [el("div", { class: "row head" }, ...["Owner", "Shop", "Mga key", "Unit (gamit / max)", "Pinakamalapit na expiry", "Kalagayan", "Account ngayon", "Huling nakita"].map((t) => el("div", {}, t)))];
+  const owners = ownersOf(keys).filter((o) => (filter === "all" || o.st.group === filter) && (o.keys.some((k) => matches(k, q))));
+  const unused = keys.filter((k) => isUnused(k) && matches(k, q));
+  if (filter !== "unused") {
+    for (const o of owners.slice(0, shown)) {
+      const open = openOwner === o.id;
+      const bar = el("div", { class: "bar" }, el("i", { class: o.used >= o.max ? "full" : "", style: `width:${o.max ? Math.min(100, Math.round(o.used * 100 / o.max)) : 0}%` }));
+      const row = el("div", { class: "row" + (open ? " open" : ""), role: "button", tabindex: "0", "aria-expanded": String(open), "data-owner": o.id },
+        el("div", {}, el("b", {}, o.name), o.email && o.email !== o.name ? el("div", { class: "muted", style: "font-size:12.5px" }, o.email) : ""),
+        el("div", {}, o.shop || "—"), el("div", {}, o.keys.length === 1 ? "1 key" : o.keys.length + " key"),
+        el("div", {}, el("div", { style: "font-size:13px;font-weight:600" }, `${o.used} / ${o.max}` + (o.used >= o.max ? " · puno na" : "")), bar),
+        el("div", {}, fmtDay(o.to)), el("div", {}, el("span", { class: "chip " + o.st.cls }, el("i"), o.st.text)),
+        el("div", {}, String(o.accounts)), el("div", { class: "muted" }, ago(o.seen)));
+      const toggle = () => { openOwner = open ? null : o.id; openKey = null; draw(); };
+      row.onclick = toggle; row.onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(); } };
+      rows.push(row);
+      if (open) rows.push(ownerDetail(o));
+    }
+    if (owners.length > shown) { const more = el("button", { type: "button", id: "moreOwners", style: "margin:14px 20px" }, `Ipakita ang susunod ${Math.min(PAGE, owners.length - shown)} (${owners.length - shown} pa)`); more.onclick = () => { shown += PAGE; draw(); }; rows.push(more); }
   }
-  if (!list.length) rows.push(el("div", { class: "row", style: "cursor:default" }, "Wala pang key. Gumawa sa ibaba."));
+  if (filter === "all" || filter === "unused") {
+    const show = filter === "unused" || unusedOpen;
+    if (unused.length || filter === "all") {
+      const head = el("div", { class: "row", id: "unusedHead", role: "button", tabindex: "0", "aria-expanded": String(show), style: "grid-template-columns:1fr auto" },
+        el("div", {}, el("b", {}, "Mga key na hindi pa ginagamit"), el("span", { class: "muted" }, ` (${unused.length})`)), el("div", { class: "muted" }, show ? "Itago ▴" : "Ipakita ▾"));
+      const tog = () => { unusedOpen = !unusedOpen; draw(); };
+      if (filter === "all") { head.onclick = tog; head.onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); tog(); } }; }
+      if (filter === "all" && unused.length) rows.push(head);
+      if (show) for (const k of unused) {
+        const open = openKey === k.id, st = judge(k);
+        const row = el("div", { class: "row" + (open ? " open" : ""), role: "button", tabindex: "0", "aria-expanded": String(open), "data-key": k.id },
+          el("div", {}, el("b", {}, k.label || "—"), el("div", { class: "muted", style: "font-size:12.5px" }, "Wala pang nag-activate")), el("div", {}, "—"), el("div", {}, el("span", { class: "key" }, k.id)),
+          el("div", {}, el("div", { style: "font-size:13px;font-weight:600" }, `0 / ${k.max}`), el("div", { class: "bar" }, el("i", { style: "width:0" }))),
+          el("div", {}, fmtDay(k.to)), el("div", {}, el("span", { class: "chip " + st.cls }, el("i"), st.text)), el("div", {}, "0"), el("div", { class: "muted" }, "—"));
+        const toggle = () => { openKey = open ? null : k.id; draw(); };
+        row.onclick = toggle; row.onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(); } };
+        rows.push(row); if (open) rows.push(detail(k));
+      }
+    }
+  }
+  if (!keys.length) rows.push(el("div", { class: "row", style: "cursor:default" }, "Wala pang key. Gumawa sa ibaba."));
+  else if (!owners.length && !unused.length) rows.push(el("div", { class: "row", style: "cursor:default" }, "Walang tumutugma."));
   $("#table").replaceChildren(...rows);
 }
 
-function detail(k) {
+function ownerDetail(o) {
+  const wrap = el("div", { class: "ownerDetail", style: "background:#f0f8f7;border-bottom:1px solid var(--line)" });
+  o.keys.forEach((k, n) => {
+    const st = judge(k);
+    wrap.append(el("div", { style: "padding:14px 20px 0;display:flex;flex-wrap:wrap;gap:10px;align-items:center", "data-key": k.id },
+      el("span", { class: "key" }, k.id), el("span", { class: "muted" }, `hanggang ${fmtDay(k.to)} · ${usedOf(k)} / ${k.max} unit`), el("span", { class: "chip " + st.cls }, el("i"), st.text)), detail(k, n));
+  });
+  const add = el("button", { type: "button", id: "addKeyFor", style: "margin:0 20px 16px" }, "+ Dagdag na key para kay " + o.name);
+  add.onclick = () => { $("#kLabel").value = o.name; $("#kLabel").scrollIntoView({ block: "center" }); $("#kLabel").focus(); };
+  wrap.append(add); return wrap;
+}
+
+function detail(k, n = 0) {
+  const sfx = n ? "-" + n : "";
   const units = el("div", { class: "units" });
   const ids = Object.keys(k.units || {});
   for (const id of ids) {
@@ -271,13 +333,13 @@ function detail(k) {
   }
   if (!ids.length) units.append(el("div", { class: "unit" }, el("span", { class: "muted" }, "Wala pang unit na gumagamit ng key na ito.")));
   const left = Math.max(0, k.max - ids.length);
-  const date = el("input", { type: "date", id: "newTo", value: k.to, "aria-label": "Bagong petsa ng expiry" }), ext = el("button", { type: "button", class: "main", id: "extend" }, "Palawigin");
+  const date = el("input", { type: "date", id: "newTo" + sfx, value: k.to, "aria-label": "Bagong petsa ng expiry" }), ext = el("button", { type: "button", class: "main", id: "extend" + sfx }, "Palawigin");
   ext.onclick = () => patch(k, ["to"], { to: date.value }, "Napalawig hanggang " + fmtDay(date.value));
-  const more = el("input", { type: "number", id: "moreUnits", min: "1", max: "500", value: "2", "aria-label": "Dagdag na unit" }), add = el("button", { type: "button", id: "addUnits" }, "Dagdagan ang unit");
+  const more = el("input", { type: "number", id: "moreUnits" + sfx, min: "1", max: "500", value: "2", "aria-label": "Dagdag na unit" }), add = el("button", { type: "button", id: "addUnits" + sfx }, "Dagdagan ang unit");
   add.onclick = () => patch(k, ["max"], { max: k.max + (parseInt(more.value, 10) || 0) }, "Dinagdagan ang unit");
-  const sus = el("button", { type: "button", class: k.status === "suspended" ? "main" : "danger", id: "suspend" }, k.status === "suspended" ? "Ibalik ang lisensya" : "I-suspend ang shop");
+  const sus = el("button", { type: "button", class: k.status === "suspended" ? "main" : "danger", id: "suspend" + sfx }, k.status === "suspended" ? "Ibalik ang lisensya" : "I-suspend ang shop");
   sus.onclick = () => patch(k, ["status"], { status: k.status === "suspended" ? "active" : "suspended" }, k.status === "suspended" ? "Naibalik" : "Na-suspend");
-  const del = el("button", { type: "button", class: "danger", id: "deleteKey" }, "Burahin ang key");
+  const del = el("button", { type: "button", class: "danger", id: "deleteKey" + sfx }, "Burahin ang key");
   del.onclick = () => deleteKey(k);
   return el("div", { class: "detail" }, el("div", { style: "flex:1 1 460px;min-width:0" }, el("div", { style: "font-size:13px;font-weight:600;margin-bottom:8px" }, "Mga unit" + (k.shop ? " ng " + k.shop : "")), units,
     el("p", { class: "note", style: "margin-top:8px" }, left ? `May ${left} pang bakanteng puwesto. Ang sobra sa ${k.max} ay tatanggihan.` : "Puno na. Ang susunod na unit ay tatanggihan hanggang magdagdag.")),
@@ -312,7 +374,7 @@ async function deleteKey(k) {
   if (!confirm("Burahin ang key na ito? Hindi na ito magagamit.")) return;
   const r = await post(`${DOCS()}:commit`, JSON.stringify({ writes: [{ delete: `projects/${PROJECT}/databases/(default)/documents/licenseKeys/${k.id}` }] }), authed());
   if (!r[0].ok) return say("#msg", "Hindi tinanggap ng cloud (" + r[0].status + ").", "err");
-  openKey = null; say("#msg", "Binura ang key.", "good"); await load();
+  openKey = null; openOwner = null; say("#msg", "Binura ang key.", "good"); await load();
 }
 
 // ---- making keys ----
