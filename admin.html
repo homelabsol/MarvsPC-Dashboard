@@ -59,6 +59,13 @@
   .flex { display:flex; gap:10px; flex-wrap:wrap; }
   .made { flex:1 1 380px; min-width:0; background:#f4f6f8; border:1px solid var(--line); border-radius:10px; padding:18px 20px; }
   .made .k { font-family:ui-monospace, Menlo, Consolas, monospace; font-size:18px; font-weight:700; word-break:break-all; display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin:8px 0; }
+  .meter { background:#f9fafb; border:1px solid var(--line); border-radius:10px; padding:14px 16px; }
+  .meter .big { font-size:26px; font-weight:700; } .meter .of { font-size:14px; font-weight:400; color:var(--muted); }
+  .meter .bar i.g { background:#16a34a; } .meter .bar i.y { background:#d97706; } .meter .bar i.r { background:#b42318; }
+  .days { display:flex; gap:6px; align-items:flex-end; height:70px; margin-top:12px; }
+  .days div { flex:1; height:100%; display:flex; flex-direction:column; justify-content:flex-end; align-items:center; gap:3px; font-size:11px; color:var(--muted); }
+  .days i { display:block; width:100%; border-radius:4px 4px 0 0; background:#cbd2da; min-height:2px; } .days i.today { background:var(--accent); }
+  .steps { margin:10px 0 0; padding:0; list-style:none; display:grid; gap:6px; font-size:13.5px; } .steps .okk { color:var(--ok); } .steps .no { color:var(--bad); font-weight:600; }
   .note { font-size:13px; color:var(--muted); margin:0; } .note.err { color:var(--bad); } .note.good { color:var(--ok); }
   .login { max-width:380px; margin:12vh auto 0; background:#fff; border:1px solid var(--line); border-radius:14px; padding:28px; display:grid; gap:14px; }
 </style>
@@ -85,6 +92,13 @@
       <p class="note" style="margin-top:4px">Pindutin ang isang owner para makita ang mga key at computer niya, at ang mga opsyon (suspend, palawigin, dagdag unit).</p>
     </div>
     <div class="cards" id="cards"></div>
+    <section class="panel" id="usage" style="padding:20px 24px">
+      <div class="flex" style="justify-content:space-between;align-items:flex-start">
+        <div><h2 style="font-size:17px">Paggamit ng Firebase ngayon</h2><p class="note" id="useSub" style="margin-top:4px"></p></div>
+        <div class="flex" id="useActs"></div>
+      </div>
+      <div id="useBody" style="margin-top:14px"></div>
+    </section>
     <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:space-between">
       <input id="find" placeholder="Hanapin ang owner, shop o key" aria-label="Hanapin ang owner, shop o key" style="max-width:320px">
       <p class="note" id="msg"></p>
@@ -115,10 +129,10 @@
 <script>
 // Public project key (not a secret). The data is protected by the Firestore rules, not by this key.
 const API_KEY = "AIzaSyBVsogVXAX6BX8wwfNoosjL0BHci4h2Mgk", PROJECT = "cashlesspisonet";
-let AUTH = "https://identitytoolkit.googleapis.com/v1", TOKEN = "https://securetoken.googleapis.com/v1/token", STORE = "https://firestore.googleapis.com/v1";
+let TEST_API = "", AUTH = "https://identitytoolkit.googleapis.com/v1", TOKEN = "https://securetoken.googleapis.com/v1/token", STORE = "https://firestore.googleapis.com/v1";
 { // tests only, and only on this computer: point the page at a pretend Firebase
   const t = new URLSearchParams(location.search).get("test_api");
-  if (t && ["localhost", "127.0.0.1"].includes(location.hostname)) { AUTH = t + "/idt/v1"; TOKEN = t + "/tok/v1/token"; STORE = t + "/fs/v1"; }
+  if (t && ["localhost", "127.0.0.1"].includes(location.hostname)) { TEST_API = t; AUTH = t + "/idt/v1"; TOKEN = t + "/tok/v1/token"; STORE = t + "/fs/v1"; }
 }
 const $ = (s) => document.querySelector(s);
 const RT = "marvspc_admin_rt", DOCS = () => `${STORE}/projects/${PROJECT}/databases/(default)/documents`;
@@ -377,6 +391,169 @@ async function deleteKey(k) {
   openKey = null; openOwner = null; say("#msg", "Binura ang key.", "good"); await load();
 }
 
+
+// ---- how much of the free Firebase quota is used (the numbers are Google's own, from Cloud Monitoring) ----
+const MON = () => (TEST_API ? TEST_API + "/mon/v3" : "https://monitoring.googleapis.com/v3");
+const GCLIENT = "marvspc_gclient", LIMITS = { reads: 50000, writes: 20000 };
+const METRICS = { reads: "firestore.googleapis.com/document/read_count", writes: "firestore.googleapis.com/document/write_count" };
+class GErr extends Error { constructor(code, extra) { super(code); this.code = code; this.extra = extra; } }
+let gTok = null, gTokUntil = 0, usage = { state: "init" }, usageTimer = null;
+
+const LA = new Intl.DateTimeFormat("en-US", { timeZone: "America/Los_Angeles", hourCycle: "h23", hour: "2-digit", minute: "2-digit", second: "2-digit" });
+function pacificStart(ms) {                               // the start of the Pacific day that holds ms: Firestore's free quota resets there
+  const o = {}; for (const p of LA.formatToParts(new Date(ms))) o[p.type] = +p.value;
+  return ms - ((o.hour * 60 + o.minute) * 60 + o.second) * 1000;
+}
+function resetAtText(startMs) {
+  return new Date(startMs + 86400000).toLocaleTimeString("fil-PH", { hour: "numeric", minute: "2-digit", timeZone: "Asia/Manila" });
+}
+function pacificDays(now) {                                // today and the 7 days before it, each [from, to)
+  const bounds = [pacificStart(now)];
+  for (let i = 0; i < 7; i++) bounds.push(pacificStart(bounds[i] - 12 * 3600000));
+  const days = [];
+  for (let i = 7; i >= 1; i--) days.push({ from: bounds[i], to: bounds[i - 1] });
+  return { today: { from: bounds[0], to: now }, days };
+}
+
+function loadGsi() {
+  return new Promise((res, rej) => {
+    if (window.google && google.accounts && google.accounts.oauth2) return res();
+    const s = document.createElement("script"); s.src = "https://accounts.google.com/gsi/client"; s.async = true;
+    s.onload = () => res(); s.onerror = () => rej(new GErr("gsi")); document.head.append(s);
+  });
+}
+const gClientId = () => (localStorage.getItem(GCLIENT) || "").trim();
+function signInGoogle() {                                  // must run from a click: Google opens a window
+  if (TEST_API) { gTok = "fake-google-token"; gTokUntil = Date.now() + 3300000; return Promise.resolve(gTok); }
+  if (!gClientId()) return Promise.reject(new GErr("noid"));
+  return loadGsi().then(() => new Promise((res, rej) => {
+    const c = google.accounts.oauth2.initTokenClient({
+      client_id: gClientId(), scope: "https://www.googleapis.com/auth/monitoring.read",
+      callback: (r) => { if (r.error) return rej(new GErr(r.error, r.error_description)); gTok = r.access_token; gTokUntil = Date.now() + (Number(r.expires_in || 3600) - 120) * 1000; res(gTok); },
+      error_callback: (e) => rej(new GErr((e && e.type) || "popup_failed_to_open")),
+    });
+    c.requestAccessToken({ prompt: "" });
+  }));
+}
+const haveToken = () => !!gTok && Date.now() < gTokUntil;
+
+async function monitor(metric, from, to) {                 // one Pacific day (or part of it) as ONE number: the sum of everything in it
+  if (!haveToken()) throw new GErr("expired");
+  const period = Math.max(60, Math.round((to - from) / 1000));
+  const q = new URLSearchParams({ filter: `metric.type="${metric}"`, "interval.startTime": new Date(from).toISOString(), "interval.endTime": new Date(to).toISOString(),
+    "aggregation.alignmentPeriod": period + "s", "aggregation.perSeriesAligner": "ALIGN_SUM", "aggregation.crossSeriesReducer": "REDUCE_SUM" });
+  const r = await fetch(`${MON()}/projects/${PROJECT}/timeSeries?${q}`, { headers: { Authorization: "Bearer " + gTok } });
+  if (!r.ok) {
+    let body = {}; try { body = await r.json(); } catch (e) { /* not json */ }
+    const msg = JSON.stringify(body);
+    if (r.status === 401) { gTok = null; throw new GErr("expired"); }
+    if (r.status === 403 && /SERVICE_DISABLED|has not been used|is disabled/i.test(msg)) throw new GErr("mon_disabled");
+    if (r.status === 403) throw new GErr("mon_403");
+    throw new GErr("mon_other", r.status);
+  }
+  const d = await r.json();
+  let sum = 0; for (const ts of d.timeSeries || []) for (const pt of ts.points || []) sum += Number((pt.value || {}).int64Value ?? (pt.value || {}).doubleValue ?? 0);
+  return Math.round(sum);
+}
+async function readUsage() {
+  const now = Date.now(), { today, days } = pacificDays(now);
+  const jobs = {};
+  for (const key of ["reads", "writes"]) {
+    jobs[key] = { today: monitor(METRICS[key], today.from, today.to), days: Promise.all(days.map((d) => monitor(METRICS[key], d.from, d.to))) };
+  }
+  const out = { at: now, resetAt: resetAtText(today.from), elapsedH: (now - today.from) / 3600000, labels: days.map((d) => new Date(d.from + 12 * 3600000).toLocaleDateString("fil-PH", { weekday: "short", timeZone: "America/Los_Angeles" })) };
+  for (const key of ["reads", "writes"]) { out[key] = { today: await jobs[key].today, days: await jobs[key].days }; }
+  return out;
+}
+
+function hintFor(e) {
+  const c = e.code, link = "https://console.cloud.google.com/apis/library/monitoring.googleapis.com?project=" + PROJECT;
+  const H = {
+    noid: "Ilagay muna ang Google Client ID.",
+    gsi: "Hindi na-load ang Google sign-in. Tingnan ang internet o ang ad blocker.",
+    access_denied: "Hindi pinayagan ng Google ang account na ito. Idagdag ang email sa Test users ng OAuth consent screen, at piliin ang tamang account.",
+    popup_closed: "Naisara ang bintana ng Google bago natapos. Subukan ulit.",
+    popup_failed_to_open: "Na-block ng browser ang bintana ng Google. Payagan ang popups sa site na ito.",
+    invalid_client: "Mali ang Client ID, o wala ang https://homelabsol.github.io sa Authorized JavaScript origins ng Client ID.",
+    expired: "Nag-expire na ang sign-in sa Google. Mag-sign in ulit.",
+    mon_disabled: "Hindi pa naka-enable ang Cloud Monitoring API. Buksan ito at pindutin ang Enable: " + link,
+    mon_403: "Walang pahintulot sa project ang Google account na ito. Gamitin ang account na may hawak ng Firebase project.",
+  };
+  return H[c] || (c === "mon_other" ? `Hindi nabasa ang Cloud Monitoring (code ${e.extra}).` : `Hindi natuloy ang sign-in (${c}). Subukan ang koneksyon para makita ang hakbang na pumalya.`);
+}
+
+function meter(label, key, d, lim) {
+  const used = d[key].today, pct = used / lim * 100, cls = pct >= 90 ? "r" : pct >= 70 ? "y" : "g";
+  const nf = (n) => n.toLocaleString("en-US");
+  const kids = [el("div", { class: "muted", style: "font-size:13px;font-weight:600" }, label),
+    el("div", { class: "big" }, nf(used), el("span", { class: "of" }, " sa " + nf(lim))),
+    el("div", { class: "bar" }, el("i", { class: cls, style: `width:${Math.min(100, pct)}%` })),
+    el("p", { class: "note", style: "margin-top:6px" }, `${pct < 10 ? pct.toFixed(1) : Math.round(pct)}% ang nagamit · natitira ${nf(Math.max(0, lim - used))}` + (pct >= 90 ? " · MALAPIT NA SA LIMITASYON" : pct >= 70 ? " · malapit na" : ""))];
+  if (d.elapsedH >= 2 && used > 0) kids.push(el("p", { class: "note" }, `Tantiya sa dulo ng araw, kung ganito pa rin ang takbo: ${nf(Math.round(used / d.elapsedH * 24))}. Tantiya lang ito, hindi galing sa Google.`));
+  const top = Math.max(lim, ...d[key].days, used);
+  const strip = el("div", { class: "days", role: "img", "aria-label": `${label}, huling 7 araw` });
+  d[key].days.forEach((v, i) => strip.append(el("div", { title: nf(v) }, el("i", { style: `height:${Math.max(2, Math.round(v / top * 100))}%` }), d.labels[i])));
+  strip.append(el("div", { title: nf(used) }, el("i", { class: "today", style: `height:${Math.max(2, Math.round(used / top * 100))}%` }), "Ngayon"));
+  kids.push(strip);
+  return el("div", { class: "meter" }, ...kids);
+}
+
+function drawUsage() {
+  const acts = $("#useActs"), body = $("#useBody"), sub = $("#useSub"); acts.replaceChildren(); body.replaceChildren();
+  const btn = (text, id, fn, cls) => { const b = el("button", { type: "button", id, class: cls || "" }, text); b.onclick = fn; return b; };
+  const hasId = !!gClientId() || (!!TEST_API && !location.search.includes("noid"));
+  if (!hasId) {
+    sub.textContent = "Kailangan muna ang Google Client ID (isang beses lang).";
+    const inp = el("input", { id: "gClient", placeholder: "xxxx.apps.googleusercontent.com", style: "max-width:420px", "aria-label": "Google Client ID" });
+    body.append(el("div", { class: "flex" }, inp, btn("I-save", "gSave", () => { const v = inp.value.trim(); if (!/\.apps\.googleusercontent\.com$/.test(v)) return say("#msg", "Hindi ito mukhang Client ID. Dapat nagtatapos sa .apps.googleusercontent.com.", "err"); localStorage.setItem(GCLIENT, v); say("#msg", "", ""); usage = { state: "out" }; drawUsage(); }, "main")));
+    return;
+  }
+  if (!haveToken() && usage.state !== "error") usage = { state: usage.state === "init" || usage.state === "ok" ? "out" : usage.state };
+  if (usage.state === "out" || usage.state === "init") {
+    sub.textContent = "Mula sa Google (Cloud Monitoring). Mag-sign in para makita.";
+    acts.append(btn("Mag-sign in with Google", "gSign", connect, "main"), btn("Subukan ang koneksyon", "gTest", testConnection));
+    return;
+  }
+  if (usage.state === "loading") { sub.textContent = "Kinukuha mula sa Google…"; return; }
+  if (usage.state === "error") {
+    sub.textContent = "Hindi nakuha ang bilang mula sa Google.";
+    body.append(el("p", { class: "note err", id: "useErr" }, hintFor(usage.error)));
+    acts.append(btn("Mag-sign in with Google", "gSign", connect, "main"), btn("Subukan ang koneksyon", "gTest", testConnection));
+    return;
+  }
+  const d = usage.data;
+  sub.textContent = `Mula sa Google · huling refresh ${new Date(d.at).toLocaleTimeString("fil-PH", { hour: "numeric", minute: "2-digit" })} · magre-reset ang quota sa ${d.resetAt} (hatinggabi sa Pacific time) · may ilang minutong pagkaantala ang datos ng Google.`;
+  acts.append(btn("I-refresh", "gRefresh", refreshUsage), btn("Mag-sign out", "gOut", signOutGoogle), btn("Subukan ang koneksyon", "gTest", testConnection));
+  body.append(el("div", { style: "display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px" }, meter("Reads", "reads", d, LIMITS.reads), meter("Writes", "writes", d, LIMITS.writes)));
+  body.append(el("p", { class: "note", style: "margin-top:10px" }, "Ang mga reads at writes ay para sa buong Firestore ng project, kasama ang lahat ng shop at ang mga dashboard. Libreng limitasyon kada araw: 50,000 reads at 20,000 writes."));
+}
+async function refreshUsage() {
+  usage = { state: "loading" }; drawUsage();
+  try { usage = { state: "ok", data: await readUsage() }; } catch (e) { usage = { state: "error", error: e instanceof GErr ? e : new GErr("mon_other", String(e.message || e)) }; }
+  drawUsage();
+  clearTimeout(usageTimer); if (usage.state === "ok") usageTimer = setTimeout(() => { if (haveToken() && !document.hidden) refreshUsage(); else if (haveToken()) usageTimer = setTimeout(refreshUsage, 60000); else { usage = { state: "out" }; drawUsage(); } }, 300000);
+}
+async function connect() {
+  usage = { state: "loading" }; drawUsage();
+  try { await signInGoogle(); } catch (e) { usage = { state: "error", error: e instanceof GErr ? e : new GErr("popup_failed_to_open") }; drawUsage(); return; }
+  await refreshUsage();
+}
+function signOutGoogle() {
+  try { if (gTok && window.google && google.accounts && google.accounts.oauth2) google.accounts.oauth2.revoke(gTok); } catch (e) { /* nothing to revoke */ }
+  gTok = null; usage = { state: "out" }; clearTimeout(usageTimer); drawUsage();
+}
+async function testConnection() {                         // says exactly which step fails, so nobody has to guess
+  const box = el("ul", { class: "steps", id: "useSteps" }); $("#useBody").prepend(box);
+  const line = (ok, text) => box.append(el("li", { class: ok ? "okk" : "no" }, (ok ? "OK · " : "PUMALPAK · ") + text));
+  if (!gClientId() && !TEST_API) return line(false, "Walang Client ID. " + hintFor(new GErr("noid")));
+  line(true, "May Client ID.");
+  try { if (!TEST_API) await loadGsi(); line(true, "Na-load ang Google sign-in."); } catch (e) { return line(false, hintFor(new GErr("gsi"))); }
+  try { if (!haveToken()) await signInGoogle(); line(true, "Pumayag ang Google account."); } catch (e) { return line(false, hintFor(e instanceof GErr ? e : new GErr("popup_failed_to_open"))); }
+  try { const n = await monitor(METRICS.reads, pacificStart(Date.now()), Date.now()); line(true, `Nabasa ang Cloud Monitoring (reads ngayon: ${n.toLocaleString("en-US")}).`); }
+  catch (e) { return line(false, hintFor(e instanceof GErr ? e : new GErr("mon_other", String(e.message || e)))); }
+  line(true, "Handa na ang lahat. Pindutin ang Mag-sign in with Google o I-refresh.");
+}
+
 // ---- making keys ----
 function randomKey() {
   const out = [];
@@ -425,7 +602,7 @@ $("#loginForm").onsubmit = async (e) => {
 async function open() {
   if (!(await isAdmin())) return leave("Hindi ito main admin account.");
   $("#loginBox").classList.add("hidden"); $("#app").classList.remove("hidden");
-  preset(12); await load();
+  preset(12); drawUsage(); await load();
 }
 (async () => { if (await resume()) { $("#who").textContent = "naka-login"; await open(); } else $("#loginBox").classList.remove("hidden"); })();
 </script>
