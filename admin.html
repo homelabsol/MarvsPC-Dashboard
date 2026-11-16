@@ -455,7 +455,7 @@ async function monitor(metric, from, to) {                 // one Pacific day (o
     const msg = JSON.stringify(body);
     if (r.status === 401) { gTok = null; throw new GErr("expired"); }
     if (r.status === 403 && /SERVICE_DISABLED|has not been used|is disabled/i.test(msg)) throw new GErr("mon_disabled");
-    if (r.status === 403) throw new GErr("mon_403");
+    if (r.status === 403) throw new GErr("mon_403", String((body.error && body.error.message) || "").slice(0, 300));
     throw new GErr("mon_other", r.status);
   }
   const d = await r.json();
@@ -484,7 +484,7 @@ function hintFor(e) {
     invalid_client: "Mali ang Client ID.",
     expired: "Nag-expire na ang sign-in sa Google. Mag-sign in ulit.",
     mon_disabled: "Hindi pa naka-enable ang Cloud Monitoring API. Buksan ito at pindutin ang Enable: " + link,
-    mon_403: "Walang pahintulot sa project ang Google account na ito. Gamitin ang account na may hawak ng Firebase project.",
+    mon_403: "Walang pahintulot sa project ang Google account na ito. Gamitin ang account na may hawak ng Firebase project." + (e.extra ? ` Sabi ng Google: "${e.extra}"` : ""),
   };
   return H[c] || (c === "mon_other" ? `Hindi nabasa ang Cloud Monitoring (code ${e.extra}).` : `Hindi natuloy ang sign-in (${c}). Pindutin ang Subukan ang koneksyon.`);
 }
