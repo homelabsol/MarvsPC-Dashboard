@@ -99,6 +99,14 @@
   .foot { font-size:12.5px; color:var(--muted); margin:6px 0 0; }
   .toolbar { display:flex; gap:8px; flex-wrap:wrap; margin:0 0 12px; }
   .toolbar input { max-width:260px; }
+  #callBar { position:sticky; top:0; z-index:60; background:#b42318; color:#fff; padding:10px 16px; display:flex; flex-direction:column; gap:8px; }
+  #callBar .row { display:flex; gap:12px; align-items:center; flex-wrap:wrap; font-weight:600; font-size:16px; }
+  #callBar button { background:#fff; color:#b42318; border:0; border-radius:8px; padding:8px 14px; font-weight:700; cursor:pointer; min-height:40px; }
+  #callBar small { font-weight:400; opacity:.9; }
+  #callBar .row.talk { background:#067647; margin:-10px -16px; padding:10px 16px; }
+  #callBar .row.talk button { color:#067647; }
+  #callBar .row.talk + .row, #callBar .row + .row.talk { margin-top:10px; }
+  #callBar.hidden { display:none; }
   .notice { margin:0 0 10px; padding:10px 14px; border-radius:10px; background:var(--okbg); color:var(--ok); font-weight:600; }
 
   @media (max-width: 1100px) { .kpis, .kpis.six { grid-template-columns:repeat(2, minmax(0, 1fr)); } }
@@ -176,6 +184,7 @@
 </div>
 
 <div id="app" class="hidden">
+  <div id="callBar" class="hidden" role="alert" aria-live="assertive"></div>
   <header class="top">
     <div class="logo" aria-hidden="true">MP</div><b>MarvsPC-Piso</b>
     <div class="who"><span id="who"></span><button type="button" id="refresh">I-refresh</button><button type="button" id="logout">Logout</button></div>
@@ -262,7 +271,8 @@ async function resume() {
   idToken = d.id_token; uid = d.user_id; localStorage.setItem(RT, d.refresh_token || rt);
   return true;
 }
-function leave() { localStorage.removeItem(RT); idToken = null; clearTimeout(timer); clearInterval(tick); $("#app").classList.add("hidden"); $("#loginBox").classList.remove("hidden"); }
+let callPoll = null, CALL_LOOK_MS = 6000;
+function leave() { localStorage.removeItem(RT); idToken = null; clearTimeout(timer); clearInterval(tick); clearInterval(callPoll); $("#app").classList.add("hidden"); $("#loginBox").classList.remove("hidden"); }
 
 // ---- load the owner's shops (the filter on ownerUid is what the security rules require) ----
 // Firestore reads count against the free quota of ALL shops (one read per Hub each time), the Realtime Database does not. So the
@@ -315,6 +325,159 @@ async function loadAlive() {
       else if (a.at > s.at) seen[id] = { at: a.at, local: now, changed: true };      // it moved forward (a Hub never goes back)
     }
   } catch (e) { alive = {}; }
+  renderCalls();
+}
+// ---- a customer pressed "Tawagan ang owner" on a PC: the Hub puts the call on its "I am alive" signal (Realtime Database).
+// A red bar stays at the top, and a beep repeats, until the owner presses Natanggap (one tiny note back to the Hub). The phone
+// is told separately by the ntfy app (the Hub sends that); this bar is for when this page is open. Browsers only allow sound
+// after the page was touched once, so the bar says so when the sound is still locked.
+// The voice of the call (the same text as hub/web/voice.js; tests/test_voice.py checks that they are identical):
+// >>> voice
+const VOICE = {
+  gathered(pc, ms) {                      // wait until the device has listed its addresses (or ms passed): then the SDP is complete
+    return new Promise((resolve) => {
+      if (pc.iceGatheringState === "complete") return resolve();
+      const done = () => { pc.removeEventListener("icegatheringstatechange", check); clearTimeout(timer); resolve(); };
+      const check = () => { if (pc.iceGatheringState === "complete") done(); };
+      const timer = setTimeout(done, ms || 3000);
+      pc.addEventListener("icegatheringstatechange", check);
+    });
+  },
+  async offer(stream) {                   // the customer's side: returns { pc, sdp }
+    const pc = new RTCPeerConnection({ iceServers: [] });
+    for (const t of stream.getAudioTracks()) pc.addTrack(t, stream);
+    await pc.setLocalDescription(await pc.createOffer());
+    await VOICE.gathered(pc);
+    return { pc, sdp: pc.localDescription.sdp };
+  },
+  async answer(offerSdp, stream) {        // the owner's side
+    const pc = new RTCPeerConnection({ iceServers: [] });
+    for (const t of stream.getAudioTracks()) pc.addTrack(t, stream);
+    await pc.setRemoteDescription({ type: "offer", sdp: offerSdp });
+    await pc.setLocalDescription(await pc.createAnswer());
+    await VOICE.gathered(pc);
+    return { pc, sdp: pc.localDescription.sdp };
+  },
+  accept(pc, sdp) { return pc.setRemoteDescription({ type: "answer", sdp }); },
+  end(pc, stream) {
+    try { if (pc) pc.close(); } catch (e) { /* already closed */ }
+    try { if (stream) stream.getTracks().forEach((t) => t.stop()); } catch (e) { /* already stopped */ }
+  },
+};
+// <<< voice
+let acked = new Set(), callBeep = null, audioCtx = null, callErr = "", talk = null, errTimer = null;   // talk: the call the owner is speaking on now
+function unlockAudio() { try { audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)(); if (audioCtx.state === "suspended") audioCtx.resume(); } catch (e) { /* no sound */ } }
+document.addEventListener("pointerdown", unlockAudio); document.addEventListener("keydown", unlockAudio);
+function beepOnce() {
+  try {
+    if (!audioCtx || audioCtx.state !== "running") return;
+    for (let i = 0; i < 3; i++) {
+      const o = audioCtx.createOscillator(), g = audioCtx.createGain(); o.frequency.value = 880; g.gain.value = 0.3; o.connect(g); g.connect(audioCtx.destination);
+      o.start(audioCtx.currentTime + i * 0.3); o.stop(audioCtx.currentTime + i * 0.3 + 0.18);
+    }
+  } catch (e) { /* no sound */ }
+}
+function activeCalls() {
+  const now = Date.now(), out = [];
+  for (const [hub, a] of Object.entries(alive)) {
+    const c = a && a.call;
+    if (c && c.id && !acked.has(c.id) && now - c.at < 15 * 60000) out.push({ hub, ...c });
+  }
+  return out;
+}
+function renderCalls() {
+  const bar = $("#callBar"); if (!bar) return;
+  const calls = activeCalls().filter((c) => !(talk && talk.c.id === c.id));
+  bar.classList.toggle("hidden", !calls.length && !talk && !callErr);
+  if (!calls.length) { clearInterval(callBeep); callBeep = null; }
+  const locked = !audioCtx || audioCtx.state !== "running";
+  const rows = [];
+  if (talk) {
+    const end = el("button", { type: "button", class: "callEnd" }, "Ibaba"); end.onclick = () => endTalk(true);
+    rows.push(el("div", { class: "row talk", "data-talk": talk.c.id }, el("span", {}, `🎧 ${talk.state === "talking" ? "Kausap mo" : "Kumokonekta kay"} ${talk.c.user || "Walk-in"} sa ${talk.c.pc}…`), end));
+  }
+  for (const c of calls) {
+    const ack = el("button", { type: "button", class: "callAck" }, c.voice ? "Natanggap (walang boses)" : "Natanggap"); ack.onclick = () => ackCall(c);
+    const kids = [el("span", {}, `📞 ${c.pc}: ${c.user || "Walk-in"} ay tumatawag. Kailangan ng tulong.`)];
+    if (c.voice && !talk) { const say = el("button", { type: "button", class: "callTalk" }, "Sagutin (boses)"); say.onclick = () => answerCall(c); kids.push(say); }
+    rows.push(el("div", { class: "row", "data-call": c.id }, ...kids, ack));
+  }
+  bar.replaceChildren(...rows,
+    ...(calls.length && locked ? [el("small", {}, "Pindutin kahit saan sa pahina para tumunog.")] : []), ...(callErr ? [el("small", {}, callErr)] : []));
+  if (calls.length && !callBeep) { beepOnce(); callBeep = setInterval(beepOnce, 2500); }
+  if (callErr && !calls.length && !talk && !errTimer) errTimer = setTimeout(() => { errTimer = null; callErr = ""; renderCalls(); }, 8000);   // a message without a call fades by itself
+}
+async function ackCall(c) {
+  try {
+    const r = await fetch(`${RTDB}/callack/${uid}/${c.hub}/${encodeURIComponent(c.id)}.json?auth=${encodeURIComponent(idToken)}`,
+      { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ at: { ".sv": "timestamp" } }) });
+    if (!r.ok) throw new Error("denied");
+    acked.add(c.id); callErr = "";
+  } catch (e) { callErr = "Hindi maipadala ang Natanggap. I-publish ang bagong database.rules.json sa Firebase."; }
+  renderCalls();
+}
+// ---- The owner answers with his voice: read the PC's offer, write the answer next to it, press Natanggap, then talk (WebRTC, hub/web/voice.js).
+const rtcUrl = (c, leaf) => `${RTDB}/rtc/${uid}/${c.hub}/${encodeURIComponent(c.id)}${leaf ? "/" + leaf : ""}.json?auth=${encodeURIComponent(idToken)}`;
+const rtcPut = (c, leaf, body) => fetch(rtcUrl(c, leaf), { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+async function answerCall(c) {
+  callErr = "";
+  try {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) throw new Error("Hindi magamit ang mikropono sa browser na ito.");
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });         // pressed by the owner: the browser asks once, here
+    talk = { c, state: "connecting", stream, pc: null, watch: null };
+    renderCalls();
+    const r = await fetch(rtcUrl(c, "offer"));
+    const offer = r.ok ? await r.json() : null;
+    if (!offer || typeof offer.sdp !== "string") throw new Error("Wala na ang tawag. Baka ibinaba na ng customer.");
+    const a = await VOICE.answer(offer.sdp, stream);
+    talk.pc = a.pc;
+    const play = () => {                                                               // the PC's voice arrives while the offer is being read: take it from the receivers
+      const tracks = a.pc.getReceivers().map((x) => x.track).filter((t) => t && t.kind === "audio");
+      if (!tracks.length) return;
+      const au = $("#talkAudio") || document.body.appendChild(el("audio", { id: "talkAudio", autoplay: "" }));
+      if (!au.srcObject) { au.srcObject = new MediaStream(tracks); au.play().catch(() => {}); }
+    };
+    a.pc.ontrack = play; play();
+    a.pc.onconnectionstatechange = () => {
+      if (!talk || talk.pc !== a.pc) return;
+      if (a.pc.connectionState === "connected") { talk.state = "talking"; play(); renderCalls(); }
+      if (a.pc.connectionState === "failed") { callErr = "Hindi makonekta ang boses. Parehong WiFi ba ang phone at ang shop?"; endTalk(true); }
+    };
+    if (!(await rtcPut(c, "answer", { sdp: a.sdp, at: { ".sv": "timestamp" } })).ok) throw new Error("Hindi maipadala ang sagot. I-publish ang bagong database.rules.json sa Firebase.");
+    await ackCall(c);                                                                  // stops the alarm and tells the PC the owner answered
+    talk.watch = setInterval(watchTalk, 2000);
+  } catch (e) {
+    callErr = e && e.name === "NotAllowedError" ? "Hindi pinayagan ang mikropono. Payagan ito sa browser, tapos ulitin." : (e && e.message) || "Hindi maisagot.";
+    if (talk) endTalk(false);
+    renderCalls();
+  }
+}
+async function watchTalk() {
+  if (!talk) return;
+  try {
+    const r = await fetch(rtcUrl(talk.c, "bye"));
+    const bye = r.ok ? await r.json() : null;
+    if (bye && bye.by === "pc") { callErr = "Tapos na ang tawag (ibinaba ng customer)."; endTalk(false); }
+  } catch (e) { /* the connection is busy: look again */ }
+}
+function endTalk(tell) {
+  const t = talk; if (!t) return;
+  talk = null; clearInterval(t.watch);
+  VOICE.end(t.pc, t.stream);
+  const au = $("#talkAudio"); if (au) au.srcObject = null;
+  if (tell) rtcPut(t.c, "bye", { by: "owner", at: { ".sv": "timestamp" } }).catch(() => {});
+  renderCalls();
+}
+async function callTopic(group) {              // the same topic the Hub works out (hub/ownercall.py): the phone subscribes to it in the ntfy app
+  const bytes = new TextEncoder().encode(`${uid}:${group}`), hash = await crypto.subtle.digest("SHA-256", bytes);
+  return "marvspc-" + [...new Uint8Array(hash)].map((b) => b.toString(16).padStart(2, "0")).join("").slice(0, 24);
+}
+function callTopicBlock(s) {
+  const code = el("code", { id: "callTopic", style: "user-select:all" }, "…");
+  callTopic(s.shopId).then((t) => { code.textContent = t; }).catch(() => { code.textContent = "Hindi makuha (kailangan ng HTTPS)."; });
+  return el("section", { class: "block", id: "callTopicBlock" }, el("h2", {}, "Tawag ng customer"),
+    el("p", { class: "empty", style: "margin:0 0 8px" }, "Kapag pinindot ng customer ang Tawagan ang owner sa PC, tutunog ang phone mo at lalabas ang pulang alarm dito. Sa phone: i-install ang libreng ntfy app, pindutin ang +, at ilagay ang topic na ito (server: ntfy.sh). Itakda sa pinakamalakas ang tunog. Parang password ang topic: huwag ibigay sa iba."),
+    el("p", { style: "margin:0" }, code));
 }
 // ---- One shop, many PCs: every Hub (every PC that keeps its own data) sends its own summary. The summaries that name
 // the same groupId are ONE shop here: the numbers are added, the PCs listed together, the waiting requests together. The
@@ -987,7 +1150,7 @@ function settingsBlock(s, branch) {
     for (const [k, v] of Object.entries(c.settings || {})) sets.append(el("tr", {}, el("td", { style: "white-space:normal" }, SETTING_LABELS[k] || k), el("td", { style: "white-space:normal" }, shown(k, v))));
     return el("div", { class: "page" }, head, el("div", { class: "two" },
       el("section", { class: "block" }, el("h2", {}, "Mga rate"), el("table", {}, el("thead", {}, el("tr", {}, el("th", {}, "Bayad"), el("th", { class: "num" }, "Oras na makukuha"))), rates)),
-      el("section", { class: "block", style: "overflow-x:auto" }, el("h2", {}, "Settings"), el("table", {}, el("thead", {}, el("tr", {}, el("th", {}, "Setting"), el("th", {}, "Halaga"))), sets))), switchesBlock(c));
+      el("section", { class: "block", style: "overflow-x:auto" }, el("h2", {}, "Settings"), el("table", {}, el("thead", {}, el("tr", {}, el("th", {}, "Setting"), el("th", {}, "Halaga"))), sets))), switchesBlock(c), callTopicBlock(s));
   }
   const d = draftOf(s.shopId, c), field = (k, label, kind) => {
     const id = "cfg_" + k;
@@ -1013,7 +1176,7 @@ function settingsBlock(s, branch) {
     el("section", { class: "block" }, el("h2", {}, "Mga rate"), rateRows, el("div", { style: "margin-top:10px" }, add),
       el("p", { class: "empty", style: "margin:8px 0 0" }, "Bayad: ₱1 hanggang ₱10,000. Oras: 1 hanggang 100,000 minuto. Hanggang 20 rate, walang parehong bayad.")),
     el("section", { class: "block" }, el("h2", {}, "Settings"), el("div", { class: "cfggrid" }, SETTING_FIELDS.map(([k, label, kind]) => field(k, label, kind))))),
-    switchesBlock(c, d, s),
+    switchesBlock(c, d, s), callTopicBlock(s),
     el("div", { style: "display:flex;gap:8px;flex-wrap:wrap" }, save, undo));
 }
 
@@ -1411,8 +1574,9 @@ function tickClocks() {
 async function open() {
   $("#loginBox").classList.add("hidden"); $("#app").classList.remove("hidden");
   await load().catch((e) => $("#view").replaceChildren(el("p", { class: "block" }, e.message)));
-  clearTimeout(timer); clearInterval(tick);
+  clearTimeout(timer); clearInterval(tick); clearInterval(callPoll);
   timer = setTimeout(poll, pollDelay()); tick = setInterval(tickClocks, 1000);
+  callPoll = setInterval(() => { if (idToken && !document.hidden) loadAlive().catch(() => {}); }, CALL_LOOK_MS);   // only the tiny free signal: an alarm must not wait 15 seconds
 }
 $("#loginForm").addEventListener("submit", async (ev) => {
   ev.preventDefault();
