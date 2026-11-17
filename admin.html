@@ -101,6 +101,11 @@
       </div>
       <div id="useBody" style="margin-top:14px"></div>
     </section>
+    <section class="panel" id="cost" style="padding:20px 24px">
+      <h2 style="font-size:17px">Pagtataya ng gastos at kita (Blaze)</h2>
+      <p class="note" id="costSub" style="margin-top:4px">Para malaman kung sapat ang singil kada shop. Gumagamit ng sukat ng mga Hub sa huling 24 oras, at ng mga presyong puwede mong baguhin.</p>
+      <div id="costBody" style="margin-top:14px"></div>
+    </section>
     <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:space-between">
       <input id="find" placeholder="Hanapin ang owner, shop o key" aria-label="Hanapin ang owner, shop o key" style="max-width:320px">
       <p class="note" id="msg"></p>
@@ -478,8 +483,77 @@ function drawUsage() {
     el("p", { class: "note", style: "margin:4px 0 10px" }, "Sa Firebase, Usage, piliin ang Last 24 hours at ilagay ang Reads at Writes dito. Ihahambing ito sa huling 24 oras ng mga Hub."),
     el("div", { class: "flex" }, inR, inW), out);
   body.append(rec); compare();
+  drawCost();
 }
 try { localStorage.removeItem("marvspc_gclient"); } catch (e) { /* nothing saved */ }
+
+// ---- what a shop costs on the paid plan (Blaze), worked out from what the Hubs measured ----
+// The free quota is for the WHOLE project (all shops together). Beyond it Firebase charges per document read and write.
+// The prices are the ones to type in (they differ by place and change): the defaults are only a starting point.
+const COST_DEFAULT = { fee: 250, units: 10, readUsd: 0.06, writeUsd: 0.18, rate: 58, days: 30 };
+let cost = (() => { try { return { ...COST_DEFAULT, ...JSON.parse(localStorage.getItem("marvspc_cost") || "{}") }; } catch (e) { return { ...COST_DEFAULT }; } })();
+function measured(now) {                                    // each shop (all its Hubs together): reads+rules and writes of the last 24 hours, and its computers
+  const hourNow = Math.floor(now / 3600000), per = new Map();
+  for (const sh of shops) {
+    const m = sh.meter; if (!m || !m.by) continue;
+    const key = sh.groupId || sh.shopId || sh.id;
+    const g = per.get(key) || { name: sh.shopName || key, r: 0, w: 0, units: 0, cover: 24 }; per.set(key, g);
+    g.units += Array.isArray(sh.pcs) ? sh.pcs.length : 0;
+    let first = hourNow;
+    for (const [h, v] of Object.entries(m.hours || {})) if (Number(h) > hourNow - 24) { g.r += v[0] + v[2]; g.w += v[1]; first = Math.min(first, Number(h)); }
+    g.cover = Math.min(g.cover, hourNow - first + 1);
+  }
+  return [...per.values()];
+}
+function drawCost() {
+  const body = $("#costBody"); body.replaceChildren();
+  const rows = measured(Date.now()), peso = (n) => "₱" + num(n), dollars = (n) => "$" + (Math.round(n * 100) / 100).toLocaleString("en-US");
+  const save = () => { try { localStorage.setItem("marvspc_cost", JSON.stringify(cost)); } catch (e) { /* not saved */ } };
+  const field = (id, label, key, step) => {
+    const i = el("input", { id, type: "number", min: "0", step: step || "any", value: String(cost[key]), "aria-label": label });
+    i.oninput = () => { const v = Number(i.value); if (i.value !== "" && v >= 0) { cost[key] = v; save(); calc(); } };
+    return el("label", { style: "display:grid;gap:4px;font-size:13px;color:var(--muted)" }, label, i);
+  };
+  body.append(el("div", { id: "costInputs", style: "display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px" },
+    field("cFee", "Singil kada shop kada buwan (₱)", "fee"), field("cUnits", "Unit kada shop (ipapalagay)", "units", "1"),
+    field("cRead", "Presyo ng 100,000 reads ($)", "readUsd"), field("cWrite", "Presyo ng 100,000 writes ($)", "writeUsd"),
+    field("cRate", "₱ kada $1", "rate"), field("cDays", "Araw kada buwan", "days", "1")));
+  const out = el("div", { id: "costOut", style: "margin-top:14px" }); body.append(out);
+  function calc() {
+    const n = rows.length, units = rows.reduce((a, g) => a + g.units, 0);
+    const lines = [];
+    if (!n || !units) {
+      out.replaceChildren(el("p", { class: "note", id: "costNone" }, "Wala pang sukat: kailangan ng Hub na na-update (may metro) at nakapagpadala na ng buod."));
+      return;
+    }
+    const cover = Math.min(...rows.map((g) => g.cover));
+    const rU = rows.reduce((a, g) => a + g.r, 0) / units, wU = rows.reduce((a, g) => a + g.w, 0) / units;     // per computer, per day
+    const rS = rU * cost.units, wS = wU * cost.units;                                                       // a shop of that many computers
+    const free = Math.min(rS ? 50000 / rS : Infinity, wS ? 20000 / wS : Infinity);
+    const monthly = (r, w) => ((r * cost.days) / 100000 * cost.readUsd + (w * cost.days) / 100000 * cost.writeUsd) * cost.rate;     // pesos
+    const one = monthly(rS, wS);
+    out.replaceChildren();
+    out.append(el("p", { class: "note", id: "costBasis" },
+      `Batayan: ${n} shop, ${units} computer. Sa huling 24 oras: ${num(rU)} reads at ${num(wU)} writes kada computer kada araw ` +
+      `(para sa ${num(cost.units)} unit: ${num(rS)} reads at ${num(wS)} writes kada araw, kasama ang dagdag ng Rules).`));
+    if (cover < 24) out.append(el("p", { class: "note err", id: "costWarn", style: "margin-top:6px" },
+      `Kulang pa ang datos: ${cover} oras pa lang ang nasusukat, kaya mas mababa ito sa tunay na buong araw. Hintayin ang isang buong araw ng tunay na gamit bago pagbatayan.`));
+    out.append(el("p", { id: "costOne", style: "margin:10px 0 0;font-size:15px" }, el("b", {}, `Gastos kada shop (${num(cost.units)} unit): `),
+      `${peso(one)} kada buwan kapag lampas na sa libre`, el("span", { class: "muted" }, ` · singil mo ${peso(cost.fee)} · natitira ${peso(cost.fee - one)}`),
+      `. Kaya ng libreng quota ang mga ${free === Infinity ? "walang hanggan" : Math.floor(free)} shop bago magbayad.`));
+    const head = ["Bilang ng shop", "Reads kada araw", "Writes kada araw", "Gastos kada buwan", "Kita kada buwan", "Natitira", "Gastos sa kita"];
+    const scen = [1, 5, 10, 20, 50, 100].map((s) => {
+      const r = rS * s, w = wS * s, pay = monthly(Math.max(0, r - 50000), Math.max(0, w - 20000)), inc = cost.fee * s;
+      return [s, num(r), num(w), peso(pay), peso(inc), peso(inc - pay), inc ? (Math.round(pay / inc * 1000) / 10) + "%" : "-"];
+    });
+    const box = el("div", { class: "scroll", id: "costTable", style: "margin-top:12px" }), t = el("table", { style: "width:100%;border-collapse:collapse;font-size:13.5px" });
+    const line = (cells, bold) => el("tr", {}, ...cells.map((c, k) => el(bold ? "th" : "td", { style: `padding:7px 10px;border-bottom:1px solid var(--line);text-align:${k ? "right" : "left"};${bold ? "font-size:12px;color:var(--muted);text-transform:uppercase" : ""}` }, c)));
+    t.append(line(head, true), ...scen.map((r) => line(r))); box.append(t); out.append(box);
+    out.append(el("p", { class: "note", style: "margin-top:10px" },
+      "Hindi kasama: oras mo sa suporta, bayad sa GCash o bangko, buwis, at storage (1 GiB libre). Ang mga presyo ay galing sa Firebase at nagbabago ayon sa lokasyon: tingnan ang kasalukuyang presyo bago mo ito ipangako. Ang Hub lang ang binibilang, kaya mas mataas nang kaunti ang totoo (dashboard ng mga owner)."));
+  }
+  calc();
+}
 
 // ---- making keys ----
 function randomKey() {
