@@ -41,6 +41,8 @@
   .side a svg { flex:0 0 20px; }
   .side .shopid { margin-top:auto; padding:10px 8px 2px; font-size:11px; color:#8fa3c4; line-height:1.5; word-break:break-all; }
   .side .shopid b { display:block; color:#c5d2e8; font-weight:600; }
+  .side .shopid .hubver { margin-top:6px; }
+  td.ver { color:#64748b; font-size:12px; white-space:nowrap; }
   .side .shopid code { font-family:ui-monospace,Consolas,monospace; color:#fff; user-select:all; }
   .side .shopid button { margin-left:6px; padding:1px 7px; font-size:11px; border-radius:6px; border:1px solid #3a5585; background:transparent; color:#c5d2e8; cursor:pointer; }
   .badge { margin-left:auto; background:#dc2626; color:#fff; border-radius:99px; min-width:22px; padding:1px 7px; font-size:12px; text-align:center; }
@@ -511,6 +513,7 @@ function joinHubs(id, ms) {
     pendingList: ms.flatMap((m) => (m.pendingList || []).map((q) => ({ ...q, _shop: m.shopId }))).sort((a, b) => (ms.length > 1 ? String(a.c).localeCompare(String(b.c)) : 0)),
     remote: ms.every((m) => m.remote === true), cfgEdit: ms.every((m) => m.cfgEdit === true),
     weakCount: Math.max(0, ...ms.map((m) => m.weakCount || 0)),
+    hubVer: [...new Set(ms.map((m) => m.version).filter(Boolean))],                  // the program version of each Hub of the shop
     configVersion: versions.length === ms.length ? Math.min(...versions) : undefined,                  // every Hub must have the new setup before it counts as done
   };
 }
@@ -602,11 +605,12 @@ function pcTable(s) {
     const k = pcKey(pc), left = pc.status === "in_use" && pc.endsAt ? clock(pc.endsAt - Date.now() / 1000) : "—";
     body.append(el("tr", {}, el("td", {}, el("b", {}, pc.name)),
       el("td", {}, el("span", { class: "pill p-" + k }, el("i"), STATUS[k] || k)), el("td", {}, pc.user || "—"),
-      el("td", { "data-ends": pc.status === "in_use" && pc.endsAt ? pc.endsAt : "" }, left)));
+      el("td", { "data-ends": pc.status === "in_use" && pc.endsAt ? pc.endsAt : "" }, left),
+      el("td", { class: "ver" }, pc.ver ? "v" + pc.ver : "—")));
   }
-  if (!s.pcs.length) body.append(el("tr", {}, el("td", { colspan: 4, class: "empty" }, "Wala pang PC.")));
+  if (!s.pcs.length) body.append(el("tr", {}, el("td", { colspan: 5, class: "empty" }, "Wala pang PC.")));
   return el("section", { class: "block", style: "overflow-x:auto" }, el("h2", {}, "Mga PC"),
-    el("table", {}, el("thead", {}, el("tr", {}, el("th", {}, "PC"), el("th", {}, "Status"), el("th", {}, "Naglalaro"), el("th", {}, "Natitirang oras"))), body));
+    el("table", {}, el("thead", {}, el("tr", {}, el("th", {}, "PC"), el("th", {}, "Status"), el("th", {}, "Naglalaro"), el("th", {}, "Natitirang oras"), el("th", {}, "Bersyon"))), body));
 }
 function topBlock(s, label) {                              // the ten who loaded the most since the start: not tied to a date range, so it stays
   const body = el("tbody");
@@ -786,6 +790,8 @@ function drawSide() {
       copy.onclick = async () => { try { await navigator.clipboard.writeText(x.shopId); copy.textContent = "Nakopya"; } catch (e) { copy.textContent = "Piliin at Ctrl+C"; } setTimeout(() => { copy.textContent = "Kopyahin"; }, 2000); };
       box.append(el("div", {}, ...(ids.length > 1 ? [x.shopName + ": "] : []), el("code", {}, x.shopId), copy));
     }
+    const vers = [...new Set(ids.flatMap((x) => x.hubVer || []))];
+    if (vers.length) box.append(el("div", { class: "hubver" }, "Bersyon ng program: ", ...vers.map((v, i) => el("span", {}, (i ? ", " : "") + "v" + v))));
     side.append(box);
   }
 }
