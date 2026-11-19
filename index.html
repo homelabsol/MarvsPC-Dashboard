@@ -504,7 +504,7 @@ function joinHubs(id, ms) {
   return {
     shopId: id, shopName: ms[0].shopName, members: ms, updatedAt: ms.map((m) => m.updatedAt).sort().pop(),
     today: { income: t("income"), consumed: Math.round(t("consumed") * 100) / 100, cash: t("cash"), gcash: t("gcash"), walkins: t("walkins"), loads: t("loads"),
-             minutes: t("minutes"), pending: t("pending"), accounts: Math.max(0, ...ms.map((m) => (m.today || {}).accounts || 0)) },   // the accounts are one set for the shop: the biggest count, not the sum
+             minutes: t("minutes"), foodT: t("foodT"), foodN: t("foodN"), foodC: t("foodC"), foodG: t("foodG"), pending: t("pending"), accounts: Math.max(0, ...ms.map((m) => (m.today || {}).accounts || 0)) },   // the accounts are one set for the shop: the biggest count, not the sum
     pcs: namedApart(ms.flatMap((m) => { const down = !hubState(m).ok; return (m.pcs || []).map((p) => ({ ...p, status: down ? "offline" : p.status, _hub: m.hubId || m.shopId })); }))   // a PC of a Hub that is gone is not online
            .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true })),
     week: Object.values(week).sort((a, b) => a.date.localeCompare(b.date)), top, topKnown: ms.some((m) => Array.isArray(m.topup)),
@@ -584,7 +584,7 @@ function freshToday(d) {
   if (!day || day === phToday()) return d;
   const t = d.today;
   return { ...d, stale: { day, today: t, detail: d.todayDetail || {} },
-    today: { income: 0, consumed: 0, cash: 0, gcash: 0, walkins: 0, loads: 0, minutes: 0, pending: t.pending || 0, accounts: t.accounts || 0 }, todayDetail: {} };
+    today: { income: 0, consumed: 0, cash: 0, gcash: 0, walkins: 0, loads: 0, minutes: 0, foodT: 0, foodN: 0, foodC: 0, foodG: 0, pending: t.pending || 0, accounts: t.accounts || 0 }, todayDetail: {} };
 }
 function online(s) { return s.pcs.filter((p) => p.status !== "offline").length; }
 
@@ -845,13 +845,17 @@ function drawSide() {
 }
 addEventListener("hashchange", () => { section = sectionFromHash(); if (idToken) draw(); });
 
+function withFood(box, foodT) {                           // the first tile (Benta) says how much of it was food
+  if (foodT > 0) box.firstChild.firstChild.append(el("span", { class: "delta" }, `kasama ang pagkain ${peso(foodT)}`));
+  return box;
+}
 function oneShop(s) {
   const t = s.today;
   return el("div", { class: "page" },
     el("div", {}, liveness(s)),
-    kpis([["coin", "Benta / load ngayon", peso(t.income)], ["cash", "Cash", peso(t.cash || 0)], ["phone", "GCash", peso(t.gcash || 0)], ["walk", "Walk-in", t.walkins || 0],
+    withFood(kpis([["coin", "Benta / load ngayon", peso(t.income)], ["cash", "Cash", peso(t.cash || 0)], ["phone", "GCash", peso(t.gcash || 0)], ["walk", "Walk-in", t.walkins || 0],
           ["clock", "Kinita ngayon (nagamit na oras)", peso(t.consumed)], ["monitor", "Online na PC", `${online(s)} / ${s.pcs.length}`],
-          ["users", "Customer accounts", t.accounts], ["inbox", "Naghihintay ng approval", t.pending]]),
+          ["users", "Customer accounts", t.accounts], ["inbox", "Naghihintay ng approval", t.pending]]), t.foodT),
     el("div", { class: "grid2" }, pcTable(s), chart(s.week)));
 }
 function stacked(build, title) {                          // one block for a branch, or one per branch under "Lahat ng branch"
@@ -865,10 +869,10 @@ function allShops() {
   const week = {};
   for (const s of shops) for (const d of s.week) { week[d.date] = week[d.date] || { date: d.date, benta: 0, kinita: 0 }; week[d.date].benta += d.benta; week[d.date].kinita += d.kinita; }
   return el("div", { class: "page" },
-    kpis([["coin", "Kabuuang benta / load ngayon", peso(sum((s) => s.today.income))], ["cash", "Cash", peso(sum((s) => s.today.cash || 0))], ["phone", "GCash", peso(sum((s) => s.today.gcash || 0))],
+    withFood(kpis([["coin", "Kabuuang benta / load ngayon", peso(sum((s) => s.today.income))], ["cash", "Cash", peso(sum((s) => s.today.cash || 0))], ["phone", "GCash", peso(sum((s) => s.today.gcash || 0))],
           ["walk", "Walk-in", sum((s) => s.today.walkins || 0)], ["clock", "Kabuuang kinita ngayon", peso(sum((s) => s.today.consumed))],
           ["monitor", "Online na PC", `${sum(online)} / ${sum((s) => s.pcs.length)}`], ["users", "Customer accounts", sum((s) => s.today.accounts)],
-          ["inbox", "Naghihintay ng approval", sum((s) => s.today.pending)]]),
+          ["inbox", "Naghihintay ng approval", sum((s) => s.today.pending)]]), sum((s) => s.today.foodT || 0)),
     el("section", { class: "block", style: "overflow-x:auto" }, el("h2", {}, "Bawat branch"),
       el("table", {}, el("thead", {}, el("tr", {}, el("th", {}, "Branch"), el("th", { class: "num" }, "Benta"), el("th", { class: "num" }, "Kinita"), el("th", { class: "num" }, "Online na PC"), el("th", {}, "Kalagayan"))), body)),
     chart(Object.values(week).sort((a, b) => a.date.localeCompare(b.date))));
@@ -1277,8 +1281,8 @@ async function fetchDocs(shopId, collection, fromKey, toKey) {
   return d.filter((x) => x.document).map((x) => fromFs({ mapValue: { fields: x.document.fields } }));
 }
 // A row is one day (or month): the money, and the details (PCs, the pesos of each hour, who loaded).
-const NUMS = ["income", "cash", "gcash", "walkins", "loads", "minutes", "consumed"];
-const blank = (date) => ({ date, income: 0, cash: 0, gcash: 0, walkins: 0, loads: 0, minutes: 0, consumed: 0, pcs: [], hours: new Array(24).fill(0), staff: [], acc: [], walk: { l: 0, c: 0, g: 0, m: 0 }, more: { k: 0, l: 0, c: 0, g: 0, m: 0 } });
+const NUMS = ["income", "cash", "gcash", "walkins", "loads", "minutes", "consumed", "foodT", "foodN", "foodC", "foodG"];     // the food* numbers are the part of income that was food
+const blank = (date) => ({ date, income: 0, cash: 0, gcash: 0, walkins: 0, loads: 0, minutes: 0, consumed: 0, foodT: 0, foodN: 0, foodC: 0, foodG: 0, pcs: [], hours: new Array(24).fill(0), staff: [], acc: [], walk: { l: 0, c: 0, g: 0, m: 0 }, more: { k: 0, l: 0, c: 0, g: 0, m: 0 } });
 const sumKeys = (a, b, keys) => { const t = { ...a }; for (const k of keys) t[k] = (t[k] || 0) + ((b || {})[k] || 0); return t; };
 function mergeList(a, b, keys) {
   const m = new Map(a.map((x) => [x.n, { ...x }]));
@@ -1287,16 +1291,16 @@ function mergeList(a, b, keys) {
 }
 function addInto(a, b) {
   for (const k of NUMS) a[k] = (a[k] || 0) + (b[k] || 0);
-  a.pcs = mergeList(a.pcs || [], b.pcs || [], ["s", "m", "c"]); a.staff = mergeList(a.staff || [], b.staff || [], ["c", "g", "l"]);
+  a.pcs = mergeList(a.pcs || [], b.pcs || [], ["s", "m", "c"]); a.staff = mergeList(a.staff || [], b.staff || [], ["c", "g", "l", "f"]);
   a.acc = mergeList(a.acc || [], b.acc || [], ["l", "c", "g", "m"]);
   a.walk = sumKeys(a.walk || {}, b.walk, ["l", "c", "g", "m"]); a.more = sumKeys(a.more || {}, b.more, ["k", "l", "c", "g", "m"]);
   a.hours = (a.hours || new Array(24).fill(0)).map((v, i) => v + ((b.hours || [])[i] || 0));
   return a;
 }
-const norm = (d) => Object.assign(blank(d.date), d, { pcs: d.pcs || [], staff: d.staff || [], acc: d.acc || [], walk: d.walk || blank("").walk, more: d.more || blank("").more, hours: d.hours && d.hours.length === 24 ? d.hours : new Array(24).fill(0) });
+const norm = (d) => Object.assign(blank(d.date), d, { foodT: d.foodT || (d.food || {}).t || 0, foodN: d.foodN || (d.food || {}).n || 0, foodC: d.foodC || (d.food || {}).c || 0, foodG: d.foodG || (d.food || {}).g || 0, pcs: d.pcs || [], staff: d.staff || [], acc: d.acc || [], walk: d.walk || blank("").walk, more: d.more || blank("").more, hours: d.hours && d.hours.length === 24 ? d.hours : new Array(24).fill(0) });
 function todayRow(s) { return (s.members || [s]).reduce((a, m) => addInto(a, todayRowOf(m)), blank(phToday())); }
 function todayRowOf(s) { return rowFrom(phToday(), s.today || {}, s.todayDetail || {}); }
-function rowFrom(date, t, x) { return norm({ date, income: t.income || 0, cash: t.cash || 0, gcash: t.gcash || 0, walkins: t.walkins || 0, loads: t.loads || 0, minutes: t.minutes || 0, consumed: t.consumed || 0, pcs: x.pcs, hours: x.hours, staff: x.staff, acc: x.acc, walk: x.walk, more: x.more }); }
+function rowFrom(date, t, x) { return norm({ date, income: t.income || 0, cash: t.cash || 0, gcash: t.gcash || 0, walkins: t.walkins || 0, loads: t.loads || 0, minutes: t.minutes || 0, consumed: t.consumed || 0, foodT: t.foodT || 0, foodN: t.foodN || 0, foodC: t.foodC || 0, foodG: t.foodG || 0, pcs: x.pcs, hours: x.hours, staff: x.staff, acc: x.acc, walk: x.walk, more: x.more }); }
 const withBranch = (rows, s) => (current === "all" && shops.length > 1)
   ? rows.map((r) => ({ ...r, pcs: (r.pcs || []).map((p) => ({ ...p, n: `${s.shopName} · ${p.n}` })) })) : rows;
 // The rows of a range for one branch: the finished part from the cloud (cached: a finished day does not change), plus today.
@@ -1402,7 +1406,7 @@ function printReport(shopName, r, by, group, rows, total) {
   const td = (v, bold) => el("td", { class: "num" }, bold ? el("b", {}, v) : v);
   const days = by === "month" ? 0 : Math.round((new Date(r.to + "T00:00:00") - new Date(r.from + "T00:00:00")) / 864e5) + 1;
   const rangeLine = by === "month" ? "Buwan-buwan" : days === 1 ? "Isang araw lang" : `${days} araw${group === "day" ? " · hatiin bawat araw" : group === "week" ? " · hatiin bawat linggo" : " · hatiin bawat buwan"}`;
-  const kp = el("div", { class: "pk" }, ...[["Kabuuang benta", peso(total.income)], ["Cash", peso(total.cash)], ["GCash", peso(total.gcash)], ["Walk-in", `${total.walkins} beses`]].map(([k, v]) => el("div", {}, el("span", {}, k), el("b", {}, v))));
+  const kp = el("div", { class: "pk" }, ...[["Kabuuang benta", peso(total.income)], ["Cash", peso(total.cash)], ["GCash", peso(total.gcash)], ["Walk-in", `${total.walkins} beses`], ...(total.foodT ? [["Pagkain (kasama)", peso(total.foodT)]] : [])].map(([k, v]) => el("div", {}, el("span", {}, k), el("b", {}, v))));
   const part = [];
   if (by === "month" || days > 1) {
     const b = el("tbody");
@@ -1415,7 +1419,8 @@ function printReport(shopName, r, by, group, rows, total) {
   for (const x of list) ab.append(el("tr", {}, el("td", {}, el("b", {}, x.n)), td(x.l), td(peso(x.c)), td(peso(x.g)), td(peso(x.c + x.g), true), td(x.m ? mins(x.m) : "—")));
   if (mo.k) ab.append(el("tr", { class: "walk" }, el("td", {}, `Iba pa (${mo.k} account)`), td(mo.l), td(peso(mo.c)), td(peso(mo.g)), td(peso(mo.c + mo.g), true), td(mo.m ? mins(mo.m) : "—")));
   if (w.l || w.c || w.g || w.m) ab.append(el("tr", { class: "walk" }, el("td", {}, `Walk-in (${w.l} beses, walang account)`), td("—"), td(peso(w.c)), td(peso(w.g)), td(peso(w.c + w.g), true), td(w.m ? mins(w.m) : "—")));
-  const sum = (k) => list.reduce((n, x) => n + x[k], 0) + w[k] + mo[k];
+  if (total.foodT) ab.append(el("tr", { class: "walk" }, el("td", {}, `Benta ng pagkain (${total.foodN} order, walang account)`), td("—"), td(peso(total.foodC)), td(peso(total.foodG)), td(peso(total.foodT), true), td("—")));
+  const sum = (k) => list.reduce((n, x) => n + x[k], 0) + w[k] + mo[k] + (k === "c" ? total.foodC : k === "g" ? total.foodG : 0);
   ab.append(el("tr", { class: "tot" }, el("td", {}, "Kabuuan"), td(sum("l") - w.l), td(peso(sum("c"))), td(peso(sum("g"))), td(peso(sum("c") + sum("g"))), td("")));
   if (!list.length && !w.c && !w.g && !mo.k) ab.prepend(el("tr", {}, el("td", { colspan: 6, class: "empty" }, "Wala pang datos ng account sa panahong ito.")));
   const missing = total.income - (sum("c") + sum("g"));
@@ -1428,7 +1433,7 @@ function printReport(shopName, r, by, group, rows, total) {
 }
 function salesCsv(rows, r, group) {
   const q = (v) => `"${String(v).replace(/"/g, '""')}"`;
-  const lines = ["Petsa,Benta,Cash,GCash,Walk-in,Load,Minuto,Kinita"].concat(rows.map((x) => [x.date, x.income, x.cash, x.gcash, x.walkins, x.loads, x.minutes, x.consumed].map(q).join(",")));
+  const lines = ["Petsa,Benta,Cash,GCash,Walk-in,Load,Minuto,Kinita,Pagkain (kasama sa Benta)"].concat(rows.map((x) => [x.date, x.income, x.cash, x.gcash, x.walkins, x.loads, x.minutes, x.consumed, x.foodT || 0].map(q).join(",")));
   const a = el("a", { href: URL.createObjectURL(new Blob(["\ufeff" + lines.join("\r\n")], { type: "text/csv;charset=utf-8" })), download: `benta-${r.from}-${r.to}.csv` });
   a.click(); URL.revokeObjectURL(a.href);
 }
@@ -1555,7 +1560,8 @@ function salesView() {
   const dl = (cur, key) => (prev ? deltaNote(cur, prev[key]) : null);
   const tiles = kpis([], false);
   tiles.className = "kpis";
-  for (const t of [salesTile("coin", "Benta / load", peso(total.income), dl(total.income, "income")), salesTile("cash", "Cash", peso(total.cash), dl(total.cash, "cash")),
+  const foodNote = (v) => (v > 0 ? el("span", { class: "delta" }, `kasama ang pagkain ${peso(v)}`) : null);
+  for (const t of [salesTile("coin", "Benta / load", peso(total.income), foodNote(total.foodT) || dl(total.income, "income")), salesTile("cash", "Cash", peso(total.cash), dl(total.cash, "cash")),
       salesTile("phone", "GCash", peso(total.gcash), dl(total.gcash, "gcash")), salesTile("walk", "Walk-in", total.walkins, dl(total.walkins, "walkins")),
       salesTile("clock", "Kinita (nagamit na oras)", peso(total.consumed), dl(total.consumed, "consumed")), salesTile("list", "Mga load", total.loads, dl(total.loads, "loads")),
       salesTile("avg", "Average kada araw", peso(Math.round(avg * 100) / 100), prevAvg !== null ? deltaNote(avg, prevAvg) : null),
@@ -1578,7 +1584,7 @@ function salesView() {
   const peakText = peak.v > 0 && total.income ? el("p", { style: "margin:0;color:var(--muted)" }, "Pinakamaraming benta tuwing ", el("b", { style: "color:var(--ink)" }, `${hh(peak.at)} hanggang ${hh((peak.at + 2) % 24)}`), `: ${peso(peak.v)} (${Math.round(peak.v / total.income * 100)}% ng kabuuan).`) : el("p", { class: "empty", style: "margin:0" }, "Wala pang datos ng oras.");
   const table = (cols, body, id) => el("table", id ? { id } : {}, el("thead", {}, el("tr", {}, cols.map((h, i) => el("th", { class: i ? "num" : "" }, h)))), body);
   const hasDetail = total.pcs.length || total.staff.length;
-  const staffBody = el("tbody"); for (const x of total.staff.sort((a, b) => b.c - a.c)) staffBody.append(el("tr", {}, el("td", {}, el("b", {}, x.n)), el("td", { class: "num" }, x.l), el("td", { class: "num" }, peso(x.c)), el("td", { class: "num" }, peso(x.g)), el("td", { class: "num" }, el("b", {}, peso(x.c)))));
+  const staffBody = el("tbody"); for (const x of total.staff.sort((a, b) => b.c - a.c)) staffBody.append(el("tr", {}, el("td", {}, el("b", {}, x.n)), el("td", { class: "num" }, x.l + (x.f ? ` + ${x.f} pagkain` : "")), el("td", { class: "num" }, peso(x.c)), el("td", { class: "num" }, peso(x.g)), el("td", { class: "num" }, el("b", {}, peso(x.c)))));
   const pcBody = el("tbody"); for (const x of total.pcs.sort((a, b) => a.n.localeCompare(b.n))) pcBody.append(el("tr", {}, el("td", {}, el("b", {}, x.n)), el("td", { class: "num" }, x.s), el("td", { class: "num" }, mins(x.m)), el("td", { class: "num" }, peso(x.c))));
   const none = (id) => el("tr", {}, el("td", { colspan: 5, class: "empty" }, "Wala pang datos. Lalabas ito pagkatapos ma-upload ng Hub ang bagong ulat (Settings, Cloud)."));
   if (!total.staff.length) staffBody.append(none()); if (!total.pcs.length) pcBody.append(none());
@@ -1588,7 +1594,7 @@ function salesView() {
   body.append(el("tr", {}, el("td", {}, el("b", {}, "Kabuuan")), ...[peso(total.income), peso(total.cash), peso(total.gcash), total.walkins, total.loads, mins(total.minutes), peso(total.consumed)].map((v) => el("td", { class: "num" }, el("b", {}, v)))));
   const cmpRow = (name, cur, old, money) => { const p = pct(cur, old); return el("tr", {}, el("td", {}, name), el("td", { class: "num" }, money ? peso(cur) : cur), el("td", { class: "num" }, money ? peso(old) : old), el("td", { class: "num " + (p === null ? "" : p >= 0 ? "up" : "down") }, p === null ? "—" : `${p >= 0 ? "▲" : "▼"} ${Math.abs(p)}%`)); };
   const cmp = prev ? el("section", { class: "block" }, el("h2", {}, "Kumpara sa nakaraang panahon"), el("p", { class: "empty", style: "margin:0 0 8px" }, periodText(st.prev.range)),
-    table(["", "Ngayon", "Nakaraan", "Pagbabago"], el("tbody", {}, cmpRow("Benta", total.income, prev.income, true), cmpRow("Cash", total.cash, prev.cash, true), cmpRow("GCash", total.gcash, prev.gcash, true),
+    table(["", "Ngayon", "Nakaraan", "Pagbabago"], el("tbody", {}, cmpRow("Benta", total.income, prev.income, true), cmpRow("Cash", total.cash, prev.cash, true), cmpRow("GCash", total.gcash, prev.gcash, true), cmpRow("Pagkain", total.foodT, prev.foodT || 0, true),
       cmpRow("Walk-in", total.walkins, prev.walkins), cmpRow("Kinita", total.consumed, prev.consumed, true), cmpRow("Mga load", total.loads, prev.loads)))) : null;
   const perBranch = current === "all" && shops.length > 1 ? el("section", { class: "block", style: "overflow-x:auto" }, el("h2", {}, "Bawat branch"),
     table(["Branch", "Benta", "Cash", "GCash", "Kinita"], el("tbody", {}, shops.map((s) => { const sd = salesCache[`g:${s.shopId}|${r.from}|${r.to}|${r.by}|${today}`];
