@@ -511,6 +511,8 @@ function joinHubs(id, ms) {
     recent: (ms.length > 1 ? [...recent.values()].sort((a, b) => String(b.c).localeCompare(String(a.c))) : [...recent.values()]).slice(0, 30),
     resetList: ms.flatMap((m) => (m.resetList || []).map((q) => ({ ...q, _shop: m.shopId }))),
     pendingList: ms.flatMap((m) => (m.pendingList || []).map((q) => ({ ...q, _shop: m.shopId }))).sort((a, b) => (ms.length > 1 ? String(a.c).localeCompare(String(b.c)) : 0)),
+    food: { p: ms.flatMap((m) => ((m.food || {}).p || []).map((q) => ({ ...q, _shop: m.shopId }))).sort((a, b) => String(a.c).localeCompare(String(b.c))),
+            n: ms.reduce((x, m) => x + (((m.food || {}).n) || 0), 0), a: ms.reduce((x, m) => x + (((m.food || {}).a) || 0), 0) },   // food orders that wait, and food sold today (apart from the time sales)
     remote: ms.every((m) => m.remote === true), cfgEdit: ms.every((m) => m.cfgEdit === true),
     weakCount: Math.max(0, ...ms.map((m) => m.weakCount || 0)),
     hubVer: [...new Set(ms.map((m) => m.version).filter(Boolean))],                  // the program version of each Hub of the shop
@@ -639,10 +641,36 @@ async function decideRequest(shopId, req, d, button, row) {
     draw(); clearTimeout(timer); timer = setTimeout(poll, 2500);
   } catch (e) { button.disabled = false; alert("Hindi naipadala. Subukan ulit."); }
 }
+// A food order: the note is named <order id>~<accept|deliver|reject>; the Hub does what its own admin page does.
+const FOOD_DO = { accept: "approve", deliver: "approve", reject: "reject" };
+const FOOD_DONE = { accept: "✓ Tinanggap ang bayad ng", deliver: "✓ Naihatid ang order ng", reject: "✓ Tinanggihan ang order ng" };
+async function decideFood(shopId, o, action, button) {
+  const text = action === "reject" ? `Tanggihan ang order ng ${o.pc} (₱${o.t})?` + (o.s === "accepted" || o.k !== "cash" ? " Kung nabayaran na, ibalik ang bayad sa customer." : "")
+    : action === "accept" ? `Tiyaking pumasok ang ₱${o.t} sa ${o.k === "bank" ? "bank" : "GCash"} app mo at tugma ang reference. Tanggapin ang bayad ng ${o.pc}?`
+    : `Naihatid na ang order ng ${o.pc} (₱${o.t})?`;
+  if (!confirm(text)) return;
+  button.disabled = true;
+  const key = `${o.id}~${action}`;
+  try {
+    const r = await fetch(`${RTDB}/decisions/${uid}/${shopId}/${encodeURIComponent(key)}.json?auth=${encodeURIComponent(idToken)}`,
+      { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ d: FOOD_DO[action], at: { ".sv": "timestamp" } }) });
+    if (!r.ok) throw new Error("denied");
+    decided[key] = { food: true, d: FOOD_DO[action], at: Date.now(), action, from: o.s, order: o.id, pc: o.pc };
+    fastUntil = Date.now() + 45000;
+    draw(); clearTimeout(timer); timer = setTimeout(poll, 2500);
+  } catch (e) { button.disabled = false; alert("Hindi naipadala. Subukan ulit."); }
+}
 // A request we pressed and that is no longer in the list was done by the Hub: say so.
 function settleDecisions() {
   const present = new Set(shops.flatMap((s) => [...(s.pendingList || []), ...(s.resetList || [])].map((q) => q.id)));
+  const foodNow = new Map(shops.flatMap((s) => ((s.food || {}).p || []).map((q) => [q.id, q.s])));
   for (const [id, x] of Object.entries(decided)) {
+    if (x.food) {                                                    // done when the order left the list or is at the next step
+      if (foodNow.has(x.order) && foodNow.get(x.order) === x.from) continue;
+      delete decided[id];
+      notice = { text: `${FOOD_DONE[x.action]} ${x.pc}.`, until: Date.now() + 10000 };
+      continue;
+    }
     if (present.has(id)) continue;
     delete decided[id];
     notice = { text: x.reset ? `${x.d === "approve" ? "✓ Naaprubahan" : "✓ Na-reject"} ang reset ng password ni ${x.u}.` : `${x.d === "approve" ? "✓ Naaprubahan" : "✓ Na-reject"} ang ₱${x.a} ni ${x.u}.`, until: Date.now() + 10000 };
@@ -687,10 +715,29 @@ function requestsBlock(s, branch) {
     el("p", { class: "empty", style: "margin:0 0 8px" }, s.remote ? "Tanungin muna ang customer kung siya talaga. Pagka-approve, siya mismo ang magta-type ng bagong password sa PC; hindi mo malalaman ang password."
       : "Naka-off ang pag-approve mula sa phone. I-on sa admin page ng shop (Settings, Cloud)."),
     el("table", {}, el("thead", {}, el("tr", {}, el("th", {}, "Oras"), el("th", {}, "Username"), el("th", {}, "PC"), el("th", {}, ""))), resetRows)] : [];
+  const fd = s.food || { p: [], n: 0, a: 0 };
+  const METHOD = { cash: "Cash", gcash: "GCash", bank: "Bank" };
+  const foodRows = el("tbody");
+  for (const q of fd.p) {
+    const act = el("td", { class: "act" });
+    const sent = Object.values(decided).find((x) => x.food && x.order === q.id);
+    if (sent) act.append(el("span", {}, `Naipadala. Hinihintay ang Hub… `));
+    else if (s.remote) {                                            // the same switch as for loads: "Approve mula sa phone"
+      const mk = (label, cls, action) => { const b = el("button", { type: "button", class: cls, style: "margin-right:6px" }, label); b.onclick = () => decideFood(q._shop || s.shopId, q, action, b); return b; };
+      if (q.s === "new" && q.k !== "cash") act.append(mk("Tanggapin ang bayad", "btn-ok", "accept"));
+      else act.append(mk("Naihatid na", "btn-ok", "deliver"));
+      act.append(mk("Tanggihan", "btn-no", "reject"));
+    }
+    foodRows.append(el("tr", {}, el("td", {}, timeText(q.c)), el("td", {}, el("b", {}, q.pc || ""), ` (${q.u})`), el("td", {}, q.x || ""),
+      el("td", {}, `₱${q.t}`), el("td", {}, `${METHOD[q.k] || q.k} · ${q.s === "accepted" ? "tinanggap na" : "bago"}`), act));
+  }
+  const foods = (fd.p.length || fd.n) ? [el("h2", { style: "margin-top:18px" }, "Order ng pagkain"),
+    el("p", { class: "empty", style: "margin:0 0 8px" }, `Naihatid ngayon: ${fd.n} order, ₱${fd.a} (hiwalay sa benta ng oras). ${s.remote ? "Puwede mong tanggapin at i-mark na naihatid dito." : "Naka-off ang pag-approve mula sa phone (admin page ng shop, Settings, Cloud); sa admin page ng PC lang ito matatanggap at maihahatid."}`),
+    ...(fd.p.length ? [el("table", {}, el("thead", {}, el("tr", {}, el("th", {}, "Oras"), el("th", {}, "PC"), el("th", {}, "Order"), el("th", {}, "Halaga"), el("th", {}, "Bayad"), el("th", {}, ""))), foodRows)] : [])] : [];
   return el("section", { class: "block", style: "overflow-x:auto" }, el("h2", {}, branch ? `Mga request na naghihintay: ${branch}` : "Mga request na naghihintay"), ...(done ? [done] : []),
     el("p", { class: "empty", style: "margin:0 0 8px" }, s.remote ? "Tingnan muna sa GCash app mo kung pumasok ang bayad at tugma ang reference number bago i-approve."
       : "Naka-off ang pag-approve mula sa phone. I-on sa admin page ng shop (Settings, Cloud)."),
-    el("table", {}, el("thead", {}, el("tr", {}, el("th", {}, "Oras"), el("th", {}, "Username"), el("th", {}, "Halaga"), el("th", {}, "Bayad"), el("th", {}, ""))), body), ...resets);
+    el("table", {}, el("thead", {}, el("tr", {}, el("th", {}, "Oras"), el("th", {}, "Username"), el("th", {}, "Halaga"), el("th", {}, "Bayad"), el("th", {}, ""))), body), ...resets, ...foods);
 }
 function dayText(iso) { return iso ? new Date(iso).toLocaleDateString("fil-PH", { month: "short", day: "numeric" }) : "—"; }
 // The true balance of an account is the one in the cloud (every Hub adds to it); a Hub's own copy can be older. Read once for the
@@ -773,7 +820,8 @@ let section = "dashboard";
 function sectionFromHash() { const k = (location.hash.match(/^#\/(\w+)/) || [])[1]; return SECTIONS.some((s) => s[0] === k) ? k : "dashboard"; }
 function drawSide() {
   const side = $("#side"); side.replaceChildren();
-  const waiting = current === "all" ? sum((s) => (s.pendingList || []).length + (s.resetList || []).length) : (((shops.find((s) => s.shopId === current) || {}).pendingList || []).length + (((shops.find((s) => s.shopId === current) || {}).resetList || []).length));
+  const countOf = (s) => (s.pendingList || []).length + (s.resetList || []).length + (((s.food || {}).p || []).length);     // loads, forgotten passwords and food orders that wait
+  const waiting = current === "all" ? sum(countOf) : countOf(shops.find((s) => s.shopId === current) || {});
   for (const [key, label, icon] of SECTIONS) {
     const a = el("a", { href: "#/" + key }, label);
     a.insertAdjacentHTML("afterbegin", icon);
