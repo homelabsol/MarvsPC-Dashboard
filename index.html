@@ -1282,7 +1282,7 @@ async function fetchDocs(shopId, collection, fromKey, toKey) {
 }
 // A row is one day (or month): the money, and the details (PCs, the pesos of each hour, who loaded).
 const NUMS = ["income", "cash", "gcash", "walkins", "loads", "minutes", "consumed", "foodT", "foodN", "foodC", "foodG"];     // the food* numbers are the part of income that was food
-const blank = (date) => ({ date, income: 0, cash: 0, gcash: 0, walkins: 0, loads: 0, minutes: 0, consumed: 0, foodT: 0, foodN: 0, foodC: 0, foodG: 0, pcs: [], hours: new Array(24).fill(0), staff: [], acc: [], walk: { l: 0, c: 0, g: 0, m: 0 }, more: { k: 0, l: 0, c: 0, g: 0, m: 0 } });
+const blank = (date) => ({ date, income: 0, cash: 0, gcash: 0, walkins: 0, loads: 0, minutes: 0, consumed: 0, foodT: 0, foodN: 0, foodC: 0, foodG: 0, foodItems: [], foodWho: [], foodOrders: [], pcs: [], hours: new Array(24).fill(0), staff: [], acc: [], walk: { l: 0, c: 0, g: 0, m: 0 }, more: { k: 0, l: 0, c: 0, g: 0, m: 0 } });
 const sumKeys = (a, b, keys) => { const t = { ...a }; for (const k of keys) t[k] = (t[k] || 0) + ((b || {})[k] || 0); return t; };
 function mergeList(a, b, keys) {
   const m = new Map(a.map((x) => [x.n, { ...x }]));
@@ -1293,14 +1293,16 @@ function addInto(a, b) {
   for (const k of NUMS) a[k] = (a[k] || 0) + (b[k] || 0);
   a.pcs = mergeList(a.pcs || [], b.pcs || [], ["s", "m", "c"]); a.staff = mergeList(a.staff || [], b.staff || [], ["c", "g", "l", "f"]);
   a.acc = mergeList(a.acc || [], b.acc || [], ["l", "c", "g", "m"]);
+  a.foodItems = mergeList(a.foodItems || [], b.foodItems || [], ["q", "t"]); a.foodWho = mergeList(a.foodWho || [], b.foodWho || [], ["k", "t"]);   // what was sold, and who bought it
+  a.foodOrders = (a.foodOrders || []).concat(b.foodOrders || []);
   a.walk = sumKeys(a.walk || {}, b.walk, ["l", "c", "g", "m"]); a.more = sumKeys(a.more || {}, b.more, ["k", "l", "c", "g", "m"]);
   a.hours = (a.hours || new Array(24).fill(0)).map((v, i) => v + ((b.hours || [])[i] || 0));
   return a;
 }
-const norm = (d) => Object.assign(blank(d.date), d, { foodT: d.foodT || (d.food || {}).t || 0, foodN: d.foodN || (d.food || {}).n || 0, foodC: d.foodC || (d.food || {}).c || 0, foodG: d.foodG || (d.food || {}).g || 0, pcs: d.pcs || [], staff: d.staff || [], acc: d.acc || [], walk: d.walk || blank("").walk, more: d.more || blank("").more, hours: d.hours && d.hours.length === 24 ? d.hours : new Array(24).fill(0) });
+const norm = (d) => Object.assign(blank(d.date), d, { foodItems: (d.food || {}).items || [], foodWho: (d.food || {}).who || [], foodOrders: ((d.food || {}).orders || []).map((o) => ({ ...o, d: d.date })), foodT: d.foodT || (d.food || {}).t || 0, foodN: d.foodN || (d.food || {}).n || 0, foodC: d.foodC || (d.food || {}).c || 0, foodG: d.foodG || (d.food || {}).g || 0, pcs: d.pcs || [], staff: d.staff || [], acc: d.acc || [], walk: d.walk || blank("").walk, more: d.more || blank("").more, hours: d.hours && d.hours.length === 24 ? d.hours : new Array(24).fill(0) });
 function todayRow(s) { return (s.members || [s]).reduce((a, m) => addInto(a, todayRowOf(m)), blank(phToday())); }
 function todayRowOf(s) { return rowFrom(phToday(), s.today || {}, s.todayDetail || {}); }
-function rowFrom(date, t, x) { return norm({ date, income: t.income || 0, cash: t.cash || 0, gcash: t.gcash || 0, walkins: t.walkins || 0, loads: t.loads || 0, minutes: t.minutes || 0, consumed: t.consumed || 0, foodT: t.foodT || 0, foodN: t.foodN || 0, foodC: t.foodC || 0, foodG: t.foodG || 0, pcs: x.pcs, hours: x.hours, staff: x.staff, acc: x.acc, walk: x.walk, more: x.more }); }
+function rowFrom(date, t, x) { return norm({ date, income: t.income || 0, cash: t.cash || 0, gcash: t.gcash || 0, walkins: t.walkins || 0, loads: t.loads || 0, minutes: t.minutes || 0, consumed: t.consumed || 0, foodT: t.foodT || 0, foodN: t.foodN || 0, foodC: t.foodC || 0, foodG: t.foodG || 0, food: x.food || {}, pcs: x.pcs, hours: x.hours, staff: x.staff, acc: x.acc, walk: x.walk, more: x.more }); }
 const withBranch = (rows, s) => (current === "all" && shops.length > 1)
   ? rows.map((r) => ({ ...r, pcs: (r.pcs || []).map((p) => ({ ...p, n: `${s.shopName} · ${p.n}` })) })) : rows;
 // The rows of a range for one branch: the finished part from the cloud (cached: a finished day does not change), plus today.
@@ -1401,6 +1403,22 @@ function periodText(r) {
   return r.by === "month" ? `Enero hanggang ${monthName(r.to.slice(0, 7), true)} ${r.to.slice(0, 4)}` : r.from === r.to ? f(r.from) : `${f(r.from)} hanggang ${f(r.to)}`;
 }
 // The printed report: the period, the money (cash, GCash, walk-in), each day and each account.
+const FOOD_PAY = { c: "Cash", g: "GCash", b: "Bank" };
+function foodSection(total, days) {                       // what was sold, and who bought it (the totals are in the tiles above)
+  if (!total.foodItems.length && !total.foodWho.length) return [];
+  const table = (cols, body, id) => el("table", { id }, el("thead", {}, el("tr", {}, cols.map((h, i) => el("th", { class: i ? "num" : "" }, h)))), body);
+  const itemBody = el("tbody"), orderBody = el("tbody"), whoBody = el("tbody");
+  for (const i of total.foodItems) itemBody.append(el("tr", {}, el("td", {}, i.n), el("td", { class: "num" }, i.q), el("td", { class: "num" }, peso(i.t))));
+  for (const w of total.foodWho) whoBody.append(el("tr", {}, el("td", {}, el("b", {}, w.n)), el("td", { class: "num" }, w.k), el("td", { class: "num" }, peso(w.t))));
+  const orders = total.foodOrders.slice().sort((a, b) => (a.d + a.h).localeCompare(b.d + b.h));
+  for (const o of orders) orderBody.append(el("tr", {}, el("td", {}, days > 1 ? `${o.d.slice(5)} ${o.h}` : o.h), el("td", {}, o.pc), el("td", {}, o.u), el("td", {}, o.i),
+    el("td", {}, FOOD_PAY[o.m] || o.m), el("td", { class: "num" }, peso(o.a))));
+  if (!orders.length) orderBody.append(el("tr", {}, el("td", { colspan: 6, class: "empty" }, "Walang listahan ng order sa saklaw na ito (buwan-buwan lang ang nasa cloud). Nasa itaas ang kabuuan bawat item at bawat account.")));
+  return [el("div", { class: "two" },
+    el("section", { class: "block", style: "overflow-x:auto" }, el("h2", {}, "Pagkain na nabenta"), table(["Item", "Dami", "Halaga"], itemBody, "foodItems")),
+    el("section", { class: "block", style: "overflow-x:auto" }, el("h2", {}, "Sino ang bumili (bawat account)"), table(["Account", "Order", "Halaga"], whoBody, "foodWho"))),
+    el("section", { class: "block", style: "overflow-x:auto" }, el("h2", {}, "Mga order ng pagkain"), table(["Oras", "PC", "Account", "Order", "Bayad", "Halaga"], orderBody, "foodOrders"))];
+}
 function printReport(shopName, r, by, group, rows, total) {
   const T = (cols, body) => el("table", {}, el("thead", {}, el("tr", {}, cols.map((h, i) => el("th", { class: i ? "num" : "" }, h)))), body);
   const td = (v, bold) => el("td", { class: "num" }, bold ? el("b", {}, v) : v);
@@ -1424,6 +1442,12 @@ function printReport(shopName, r, by, group, rows, total) {
   ab.append(el("tr", { class: "tot" }, el("td", {}, "Kabuuan"), td(sum("l") - w.l), td(peso(sum("c"))), td(peso(sum("g"))), td(peso(sum("c") + sum("g"))), td("")));
   if (!list.length && !w.c && !w.g && !mo.k) ab.prepend(el("tr", {}, el("td", { colspan: 6, class: "empty" }, "Wala pang datos ng account sa panahong ito.")));
   const missing = total.income - (sum("c") + sum("g"));
+  if (total.foodItems.length) {
+    const ib = el("tbody"), wb = el("tbody");
+    for (const i of total.foodItems) ib.append(el("tr", {}, el("td", {}, i.n), td(i.q), td(peso(i.t))));
+    for (const w of total.foodWho) wb.append(el("tr", {}, el("td", {}, w.n), td(w.k), td(peso(w.t))));
+    part.push(el("h2", {}, "Pagkain na nabenta"), T(["Item", "Dami", "Halaga"], ib), el("h2", {}, "Sino ang bumili"), T(["Account", "Order", "Halaga"], wb));
+  }
   const made = new Date().toLocaleString("fil-PH", { timeZone: "Asia/Manila", dateStyle: "medium", timeStyle: "short" });
   return el("div", { class: "printreport", id: "printReport" },
     el("div", { class: "ph" }, el("div", {}, el("div", { class: "shop" }, shopName || "MarvsPC-Piso"), el("div", { class: "sub" }, "Ulat ng Benta")), el("div", { class: "rng" }, el("b", {}, periodText(r)), el("br"), rangeLine)),
@@ -1620,6 +1644,7 @@ function salesView() {
     el("div", { class: cmp ? "two" : "page" },
       el("section", { class: "block", style: "overflow-x:auto" }, el("h2", {}, "Bawat PC"), table(["PC", "Sessions", "Oras na nagamit", "Kinita"], pcBody, "salesPcs")), ...(cmp ? [cmp] : [])),
     ...(perBranch ? [perBranch] : []),
+    ...foodSection(total, by === "month" ? 31 : Math.round((new Date(r.to + "T00:00:00") - new Date(r.from + "T00:00:00")) / 864e5) + 1),
     el("section", { class: "block", style: "overflow-x:auto" }, el("h2", {}, "Bawat account (nag-top up o naglaro)"), table(["Account", "Beses nag-top up", "Cash", "GCash", "Kabuuang top up", "Oras na nagamit"], accBody, "salesAccounts")),
     el("section", { class: "block", style: "overflow-x:auto" }, el("h2", {}, by === "month" || group === "month" ? "Talaan bawat buwan" : group === "week" ? "Talaan bawat linggo" : "Talaan bawat araw"),
       table(["Petsa", "Benta", "Cash", "GCash", "Walk-in", "Load", "Oras na nagamit", "Kinita"], body, "salesTable"),
