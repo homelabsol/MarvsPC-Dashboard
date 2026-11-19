@@ -1243,6 +1243,7 @@ function settingsBlock(s, branch) {
 // per finished month); today comes from the summary the page already has. Reading is bounded: a range of days is at
 // most 90 reads (a month about 31), a year about 43, and the comparison reads the same again.
 const RANGES = [["today", "Ngayon"], ["yesterday", "Kahapon"], ["last7", "7 araw"], ["last30", "30 araw"], ["month", "Ngayong buwan"], ["lastmonth", "Nakaraang buwan"], ["year", "Ngayong taon"], ["custom", "Custom"]];
+let salesStaffDays = false;      // the table of the cash to hand over: also one block for every day
 let salesRange = "last7", salesGroup = "day", salesCompare = false, salesFrom = "", salesTo = "", salesCache = {};
 let salesState = { key: "", data: null, prev: null, busy: false, error: "", note: "" };
 const MAX_DAYS = 90;
@@ -1292,6 +1293,9 @@ function mergeList(a, b, keys) {
 // Food that is in the day totals but not yet with an account (days sent to the cloud before the accounts carried their food).
 const foodLeft = (t) => { let c = t.foodC || 0, g = t.foodG || 0; for (const x of [...(t.acc || []), t.walk || {}, t.more || {}]) { c -= x.fc || 0; g -= x.fg || 0; } return { c: Math.max(0, c), g: Math.max(0, g) }; };
 const foodOf = (x) => (x.fc || 0) + (x.fg || 0);
+// Who handled the cash: the name, and a short line saying where it was done (the two "Owner" rows look alike otherwise).
+const STAFF_WHERE = { "Owner (phone)": ["Owner", "inaprubahan sa phone"], "Owner": ["Owner", "sa admin page ng PC"], "Customer (GCash)": ["Customer (GCash)", "ang customer mismo ang nag-GCash"] };
+const staffWho = (n) => STAFF_WHERE[n] || [n, "bantay"];
 function addInto(a, b) {
   for (const k of NUMS) a[k] = (a[k] || 0) + (b[k] || 0);
   a.pcs = mergeList(a.pcs || [], b.pcs || [], ["s", "m", "c"]); a.staff = mergeList(a.staff || [], b.staff || [], ["c", "g", "l", "f"]);
@@ -1458,6 +1462,10 @@ function printReport(shopName, r, by, group, rows, total) {
   return el("div", { class: "printreport", id: "printReport" },
     el("div", { class: "ph" }, el("div", {}, el("div", { class: "shop" }, shopName || "MarvsPC-Piso"), el("div", { class: "sub" }, "Ulat ng Benta")), el("div", { class: "rng" }, el("b", {}, periodText(r)), el("br"), rangeLine)),
     kp, ...part, el("h2", {}, "Bawat account (nag-top up o naglaro)"), T(["Account", "Beses nag-top up", "Cash", "GCash", "Pagkain (kasama)", "Kabuuang benta", "Oras na nagamit"], ab),
+    ...(total.staff.length ? [el("h2", {}, "Cash na iaabot ng bawat bantay"), T(["Bantay", "Load", "Pagkain", "GCash", "Iaabot na cash"], (() => {
+      const b = el("tbody"), sm = (k) => total.staff.reduce((n, x) => n + (x[k] || 0), 0);
+      for (const x of total.staff) { const [n, w] = staffWho(x.n); b.append(el("tr", {}, el("td", {}, `${n} (${w})`), td(x.l || 0), td(x.f || "—"), td(peso(x.g)), td(peso(x.c), true))); }
+      b.append(el("tr", { class: "tot" }, el("td", {}, "Kabuuan"), td(sm("l")), td(sm("f") || "—"), td(peso(sm("g"))), td(peso(sm("c"))))); return b; })())] : []),
     ...(missing > 0 ? [el("p", { class: "pf" }, `May ${peso(missing)} na walang account sa listahan (mga araw na wala pang detalye ng account).`)] : []),
     el("div", { class: "pf" }, `Binuo: ${made} · Para lang sa owner`));
 }
@@ -1614,7 +1622,18 @@ function salesView() {
   const peakText = peak.v > 0 && total.income ? el("p", { style: "margin:0;color:var(--muted)" }, "Pinakamaraming benta tuwing ", el("b", { style: "color:var(--ink)" }, `${hh(peak.at)} hanggang ${hh((peak.at + 2) % 24)}`), `: ${peso(peak.v)} (${Math.round(peak.v / total.income * 100)}% ng kabuuan).`) : el("p", { class: "empty", style: "margin:0" }, "Wala pang datos ng oras.");
   const table = (cols, body, id) => el("table", id ? { id } : {}, el("thead", {}, el("tr", {}, cols.map((h, i) => el("th", { class: i ? "num" : "" }, h)))), body);
   const hasDetail = total.pcs.length || total.staff.length;
-  const staffBody = el("tbody"); for (const x of total.staff.sort((a, b) => b.c - a.c)) staffBody.append(el("tr", {}, el("td", {}, el("b", {}, x.n)), el("td", { class: "num" }, x.l + (x.f ? ` + ${x.f} pagkain` : "")), el("td", { class: "num" }, peso(x.c)), el("td", { class: "num" }, peso(x.g)), el("td", { class: "num" }, el("b", {}, peso(x.c)))));
+  const staffCell = (n) => { const [a, b] = staffWho(n); return el("td", {}, el("b", {}, a), el("div", { class: "empty", style: "font-size:12px;margin:0" }, b)); };
+  const num = (v, bold) => el("td", { class: "num" }, bold ? el("b", {}, v) : v);
+  const staffLine = (x, first) => el("tr", {}, ...(first !== undefined ? [first] : []), staffCell(x.n), num(x.l || 0), num(x.f || "—"), num(peso(x.g)), num(peso(x.c), true));
+  const staffList = total.staff.sort((a, b) => b.c - a.c || a.n.localeCompare(b.n));
+  const staffBody = el("tbody");
+  for (const x of staffList) staffBody.append(staffLine(x));
+  const sumS = (k) => staffList.reduce((n, x) => n + (x[k] || 0), 0);
+  if (staffList.length) staffBody.append(el("tr", { class: "tot" }, el("td", {}, el("b", {}, "Kabuuan")), num(sumS("l"), true), num(sumS("f") || "—", true), num(peso(sumS("g")), true), num(peso(sumS("c")), true)));
+  const perDay = new Map();                                    // each day's attendants (the rows of one day can come from several Hubs)
+  for (const x of d.rows) perDay.set(x.date, mergeList(perDay.get(x.date) || [], x.staff || [], ["c", "g", "l", "f"]));
+  const dayBody = el("tbody");
+  if (salesStaffDays) for (const [date, list] of [...perDay].sort((a, b) => a[0].localeCompare(b[0]))) list.sort((a, b) => b.c - a.c).forEach((x, i) => dayBody.append(staffLine(x, el("td", {}, i ? "" : rowLabel(date, "day", "day")))));
   const pcBody = el("tbody"); for (const x of total.pcs.sort((a, b) => a.n.localeCompare(b.n))) pcBody.append(el("tr", {}, el("td", {}, el("b", {}, x.n)), el("td", { class: "num" }, x.s), el("td", { class: "num" }, mins(x.m)), el("td", { class: "num" }, peso(x.c))));
   const none = (id) => el("tr", {}, el("td", { colspan: 5, class: "empty" }, "Wala pang datos. Lalabas ito pagkatapos ma-upload ng Hub ang bagong ulat (Settings, Cloud)."));
   if (!total.staff.length) staffBody.append(none()); if (!total.pcs.length) pcBody.append(none());
@@ -1651,7 +1670,11 @@ function salesView() {
         el("h2", { style: "margin-top:22px" }, "Oras ng pagdagsa"), peakText)),
     el("div", { class: "two" },
       el("section", { class: "block" }, el("h2", {}, "Benta bawat oras"), hbars, hl),
-      el("section", { class: "block", style: "overflow-x:auto" }, el("h2", {}, "Bawat bantay (cash na dapat iabot)"), table(["Bantay", "Load", "Cash", "GCash", "Dapat iabot"], staffBody, "salesStaff"))),
+      el("section", { class: "block", style: "overflow-x:auto" }, el("h2", {}, "Cash na iaabot ng bawat bantay"),
+        el("p", { class: "empty", style: "margin:0 0 8px" }, periodText(r) + ". Ang GCash ay nasa GCash na, hindi iaabot."),
+        table(["Bantay", "Load", "Pagkain", "GCash", "Iaabot na cash"], staffBody, "salesStaff"),
+        ...(by === "day" && perDay.size > 1 && staffList.length ? [Object.assign(el("button", { type: "button", id: "staffDaysBtn", style: "margin-top:10px" }, salesStaffDays ? "Itago ang bawat araw" : "Ipakita bawat araw"), { onclick: () => { salesStaffDays = !salesStaffDays; draw(); } })] : []),
+        ...(salesStaffDays && by === "day" && perDay.size > 1 ? [el("div", { style: "overflow-x:auto;margin-top:10px" }, table(["Petsa", "Bantay", "Load", "Pagkain", "GCash", "Iaabot na cash"], dayBody, "salesStaffDays"))] : []))),
     el("div", { class: cmp ? "two" : "page" },
       el("section", { class: "block", style: "overflow-x:auto" }, el("h2", {}, "Bawat PC"), table(["PC", "Sessions", "Oras na nagamit", "Kinita"], pcBody, "salesPcs")), ...(cmp ? [cmp] : [])),
     ...(perBranch ? [perBranch] : []),
