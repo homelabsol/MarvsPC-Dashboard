@@ -1282,20 +1282,23 @@ async function fetchDocs(shopId, collection, fromKey, toKey) {
 }
 // A row is one day (or month): the money, and the details (PCs, the pesos of each hour, who loaded).
 const NUMS = ["income", "cash", "gcash", "walkins", "loads", "minutes", "consumed", "foodT", "foodN", "foodC", "foodG"];     // the food* numbers are the part of income that was food
-const blank = (date) => ({ date, income: 0, cash: 0, gcash: 0, walkins: 0, loads: 0, minutes: 0, consumed: 0, foodT: 0, foodN: 0, foodC: 0, foodG: 0, foodItems: [], foodWho: [], foodOrders: [], pcs: [], hours: new Array(24).fill(0), staff: [], acc: [], walk: { l: 0, c: 0, g: 0, m: 0 }, more: { k: 0, l: 0, c: 0, g: 0, m: 0 } });
+const blank = (date) => ({ date, income: 0, cash: 0, gcash: 0, walkins: 0, loads: 0, minutes: 0, consumed: 0, foodT: 0, foodN: 0, foodC: 0, foodG: 0, foodItems: [], foodWho: [], foodOrders: [], pcs: [], hours: new Array(24).fill(0), staff: [], acc: [], walk: { l: 0, c: 0, g: 0, m: 0, fc: 0, fg: 0 }, more: { k: 0, l: 0, c: 0, g: 0, m: 0, fc: 0, fg: 0 } });
 const sumKeys = (a, b, keys) => { const t = { ...a }; for (const k of keys) t[k] = (t[k] || 0) + ((b || {})[k] || 0); return t; };
 function mergeList(a, b, keys) {
   const m = new Map(a.map((x) => [x.n, { ...x }]));
   for (const x of b) { const t = m.get(x.n) || { n: x.n, ...Object.fromEntries(keys.map((k) => [k, 0])) }; for (const k of keys) t[k] = (t[k] || 0) + (x[k] || 0); m.set(x.n, t); }
   return [...m.values()];
 }
+// Food that is in the day totals but not yet with an account (days sent to the cloud before the accounts carried their food).
+const foodLeft = (t) => { let c = t.foodC || 0, g = t.foodG || 0; for (const x of [...(t.acc || []), t.walk || {}, t.more || {}]) { c -= x.fc || 0; g -= x.fg || 0; } return { c: Math.max(0, c), g: Math.max(0, g) }; };
+const foodOf = (x) => (x.fc || 0) + (x.fg || 0);
 function addInto(a, b) {
   for (const k of NUMS) a[k] = (a[k] || 0) + (b[k] || 0);
   a.pcs = mergeList(a.pcs || [], b.pcs || [], ["s", "m", "c"]); a.staff = mergeList(a.staff || [], b.staff || [], ["c", "g", "l", "f"]);
-  a.acc = mergeList(a.acc || [], b.acc || [], ["l", "c", "g", "m"]);
+  a.acc = mergeList(a.acc || [], b.acc || [], ["l", "c", "g", "m", "fc", "fg"]);
   a.foodItems = mergeList(a.foodItems || [], b.foodItems || [], ["q", "t"]); a.foodWho = mergeList(a.foodWho || [], b.foodWho || [], ["k", "t"]);   // what was sold, and who bought it
   a.foodOrders = (a.foodOrders || []).concat(b.foodOrders || []);
-  a.walk = sumKeys(a.walk || {}, b.walk, ["l", "c", "g", "m"]); a.more = sumKeys(a.more || {}, b.more, ["k", "l", "c", "g", "m"]);
+  a.walk = sumKeys(a.walk || {}, b.walk, ["l", "c", "g", "m", "fc", "fg"]); a.more = sumKeys(a.more || {}, b.more, ["k", "l", "c", "g", "m", "fc", "fg"]);
   a.hours = (a.hours || new Array(24).fill(0)).map((v, i) => v + ((b.hours || [])[i] || 0));
   return a;
 }
@@ -1434,13 +1437,16 @@ function printReport(shopName, r, by, group, rows, total) {
   }
   const list = [...total.acc].sort((a, b) => (b.c + b.g) - (a.c + a.g) || b.m - a.m || a.n.localeCompare(b.n)), w = total.walk, mo = total.more;
   const ab = el("tbody");
-  for (const x of list) ab.append(el("tr", {}, el("td", {}, el("b", {}, x.n)), td(x.l), td(peso(x.c)), td(peso(x.g)), td(peso(x.c + x.g), true), td(x.m ? mins(x.m) : "—")));
-  if (mo.k) ab.append(el("tr", { class: "walk" }, el("td", {}, `Iba pa (${mo.k} account)`), td(mo.l), td(peso(mo.c)), td(peso(mo.g)), td(peso(mo.c + mo.g), true), td(mo.m ? mins(mo.m) : "—")));
-  if (w.l || w.c || w.g || w.m) ab.append(el("tr", { class: "walk" }, el("td", {}, `Walk-in (${w.l} beses, walang account)`), td("—"), td(peso(w.c)), td(peso(w.g)), td(peso(w.c + w.g), true), td(w.m ? mins(w.m) : "—")));
-  if (total.foodT) ab.append(el("tr", { class: "walk" }, el("td", {}, `Benta ng pagkain (${total.foodN} order, walang account)`), td("—"), td(peso(total.foodC)), td(peso(total.foodG)), td(peso(total.foodT), true), td("—")));
-  const sum = (k) => list.reduce((n, x) => n + x[k], 0) + w[k] + mo[k] + (k === "c" ? total.foodC : k === "g" ? total.foodG : 0);
-  ab.append(el("tr", { class: "tot" }, el("td", {}, "Kabuuan"), td(sum("l") - w.l), td(peso(sum("c"))), td(peso(sum("g"))), td(peso(sum("c") + sum("g"))), td("")));
-  if (!list.length && !w.c && !w.g && !mo.k) ab.prepend(el("tr", {}, el("td", { colspan: 6, class: "empty" }, "Wala pang datos ng account sa panahong ito.")));
+  const left = foodLeft(total), leftT = left.c + left.g;
+  const fd = (x) => foodOf(x) ? peso(foodOf(x)) : "—";
+  for (const x of list) ab.append(el("tr", {}, el("td", {}, el("b", {}, x.n)), td(x.l), td(peso(x.c)), td(peso(x.g)), td(fd(x)), td(peso(x.c + x.g), true), td(x.m ? mins(x.m) : "—")));
+  if (mo.k) ab.append(el("tr", { class: "walk" }, el("td", {}, `Iba pa (${mo.k} account)`), td(mo.l), td(peso(mo.c)), td(peso(mo.g)), td(fd(mo)), td(peso(mo.c + mo.g), true), td(mo.m ? mins(mo.m) : "—")));
+  if (w.l || w.c || w.g || w.m) ab.append(el("tr", { class: "walk" }, el("td", {}, `Walk-in (${w.l} beses, walang account)`), td("—"), td(peso(w.c)), td(peso(w.g)), td(fd(w)), td(peso(w.c + w.g), true), td(w.m ? mins(w.m) : "—")));
+  if (leftT) ab.append(el("tr", { class: "walk" }, el("td", {}, "Benta ng pagkain (walang account sa talaan)"), td("—"), td(peso(left.c)), td(peso(left.g)), td(peso(leftT)), td(peso(leftT), true), td("—")));
+  const sum = (k) => list.reduce((n, x) => n + x[k], 0) + w[k] + mo[k] + (k === "c" ? left.c : k === "g" ? left.g : 0);
+  const sumFood = list.reduce((n, x) => n + foodOf(x), 0) + foodOf(w) + foodOf(mo) + leftT;
+  ab.append(el("tr", { class: "tot" }, el("td", {}, "Kabuuan"), td(sum("l") - w.l), td(peso(sum("c"))), td(peso(sum("g"))), td(sumFood ? peso(sumFood) : "—"), td(peso(sum("c") + sum("g"))), td("")));
+  if (!list.length && !w.c && !w.g && !mo.k && !leftT) ab.prepend(el("tr", {}, el("td", { colspan: 7, class: "empty" }, "Wala pang datos ng account sa panahong ito.")));
   const missing = total.income - (sum("c") + sum("g"));
   if (total.foodItems.length) {
     const ib = el("tbody"), wb = el("tbody");
@@ -1451,7 +1457,7 @@ function printReport(shopName, r, by, group, rows, total) {
   const made = new Date().toLocaleString("fil-PH", { timeZone: "Asia/Manila", dateStyle: "medium", timeStyle: "short" });
   return el("div", { class: "printreport", id: "printReport" },
     el("div", { class: "ph" }, el("div", {}, el("div", { class: "shop" }, shopName || "MarvsPC-Piso"), el("div", { class: "sub" }, "Ulat ng Benta")), el("div", { class: "rng" }, el("b", {}, periodText(r)), el("br"), rangeLine)),
-    kp, ...part, el("h2", {}, "Bawat account (nag-top up o naglaro)"), T(["Account", "Beses nag-top up", "Cash", "GCash", "Kabuuang top up", "Oras na nagamit"], ab),
+    kp, ...part, el("h2", {}, "Bawat account (nag-top up o naglaro)"), T(["Account", "Beses nag-top up", "Cash", "GCash", "Pagkain (kasama)", "Kabuuang benta", "Oras na nagamit"], ab),
     ...(missing > 0 ? [el("p", { class: "pf" }, `May ${peso(missing)} na walang account sa listahan (mga araw na wala pang detalye ng account).`)] : []),
     el("div", { class: "pf" }, `Binuo: ${made} · Para lang sa owner`));
 }
@@ -1626,9 +1632,14 @@ function salesView() {
       return el("tr", {}, el("td", {}, el("b", {}, s.shopName)), el("td", { class: "num" }, peso(rs.income)), el("td", { class: "num" }, peso(rs.cash)), el("td", { class: "num" }, peso(rs.gcash)), el("td", { class: "num" }, peso(rs.consumed))); })))) : null;
   const shopName = current === "all" ? "Lahat ng branch" : (shops.find((x) => x.shopId === current) || {}).shopName || "";
   const accBody = el("tbody");
-  for (const x of [...total.acc].sort((a, b) => (b.c + b.g) - (a.c + a.g) || b.m - a.m || a.n.localeCompare(b.n))) accBody.append(el("tr", {}, el("td", {}, el("b", {}, x.n)), el("td", { class: "num" }, x.l), el("td", { class: "num" }, peso(x.c)), el("td", { class: "num" }, peso(x.g)), el("td", { class: "num" }, el("b", {}, peso(x.c + x.g))), el("td", { class: "num" }, x.m ? mins(x.m) : "—")));
-  if (total.more.k) accBody.append(el("tr", {}, el("td", {}, `Iba pa (${total.more.k} account)`), el("td", { class: "num" }, total.more.l), el("td", { class: "num" }, peso(total.more.c)), el("td", { class: "num" }, peso(total.more.g)), el("td", { class: "num" }, peso(total.more.c + total.more.g)), el("td", { class: "num" }, mins(total.more.m))));
-  if (!total.acc.length) accBody.append(el("tr", {}, el("td", { colspan: 6, class: "empty" }, "Wala pang datos ng account. Lalabas ito pagkatapos ma-upload ng Hub ang bagong ulat (Settings, Cloud).")));
+  const nf = (x) => el("td", { class: "num" }, foodOf(x) ? peso(foodOf(x)) : "—");
+  for (const x of [...total.acc].sort((a, b) => (b.c + b.g) - (a.c + a.g) || b.m - a.m || a.n.localeCompare(b.n))) accBody.append(el("tr", {}, el("td", {}, el("b", {}, x.n)), el("td", { class: "num" }, x.l), el("td", { class: "num" }, peso(x.c)), el("td", { class: "num" }, peso(x.g)), nf(x), el("td", { class: "num" }, el("b", {}, peso(x.c + x.g))), el("td", { class: "num" }, x.m ? mins(x.m) : "—")));
+  if (total.more.k) accBody.append(el("tr", {}, el("td", {}, `Iba pa (${total.more.k} account)`), el("td", { class: "num" }, total.more.l), el("td", { class: "num" }, peso(total.more.c)), el("td", { class: "num" }, peso(total.more.g)), nf(total.more), el("td", { class: "num" }, peso(total.more.c + total.more.g)), el("td", { class: "num" }, mins(total.more.m))));
+  const w2 = total.walk;
+  if (w2.l || w2.c || w2.g || w2.m) accBody.append(el("tr", {}, el("td", {}, `Walk-in (${w2.l} beses, walang account)`), el("td", { class: "num" }, "—"), el("td", { class: "num" }, peso(w2.c)), el("td", { class: "num" }, peso(w2.g)), nf(w2), el("td", { class: "num" }, peso(w2.c + w2.g)), el("td", { class: "num" }, w2.m ? mins(w2.m) : "—")));
+  const left2 = foodLeft(total), left2T = left2.c + left2.g;
+  if (left2T) accBody.append(el("tr", {}, el("td", {}, "Benta ng pagkain (walang account sa talaan)"), el("td", { class: "num" }, "—"), el("td", { class: "num" }, peso(left2.c)), el("td", { class: "num" }, peso(left2.g)), el("td", { class: "num" }, peso(left2T)), el("td", { class: "num" }, peso(left2T)), el("td", { class: "num" }, "—")));
+  if (!total.acc.length && !left2T) accBody.append(el("tr", {}, el("td", { colspan: 7, class: "empty" }, "Wala pang datos ng account. Lalabas ito pagkatapos ma-upload ng Hub ang bagong ulat (Settings, Cloud).")));
   return el("div", { class: "page" }, ...head,
     ...(st.data.partial ? [el("p", { class: "notice warn" }, `Hanggang ${MAX_DAYS} araw lang ang detalye bawat araw. Ang mas luma ay wala sa talaan; piliin ang Ngayong taon para sa buwan-buwan.`)] : []),
     tiles,
@@ -1645,7 +1656,7 @@ function salesView() {
       el("section", { class: "block", style: "overflow-x:auto" }, el("h2", {}, "Bawat PC"), table(["PC", "Sessions", "Oras na nagamit", "Kinita"], pcBody, "salesPcs")), ...(cmp ? [cmp] : [])),
     ...(perBranch ? [perBranch] : []),
     ...foodSection(total, by === "month" ? 31 : Math.round((new Date(r.to + "T00:00:00") - new Date(r.from + "T00:00:00")) / 864e5) + 1),
-    el("section", { class: "block", style: "overflow-x:auto" }, el("h2", {}, "Bawat account (nag-top up o naglaro)"), table(["Account", "Beses nag-top up", "Cash", "GCash", "Kabuuang top up", "Oras na nagamit"], accBody, "salesAccounts")),
+    el("section", { class: "block", style: "overflow-x:auto" }, el("h2", {}, "Bawat account (nag-top up o naglaro)"), table(["Account", "Beses nag-top up", "Cash", "GCash", "Pagkain (kasama)", "Kabuuang benta", "Oras na nagamit"], accBody, "salesAccounts")),
     el("section", { class: "block", style: "overflow-x:auto" }, el("h2", {}, by === "month" || group === "month" ? "Talaan bawat buwan" : group === "week" ? "Talaan bawat linggo" : "Talaan bawat araw"),
       table(["Petsa", "Benta", "Cash", "GCash", "Walk-in", "Load", "Oras na nagamit", "Kinita"], body, "salesTable"),
       el("p", { class: "empty", style: "margin:8px 0 0" }, "Ang mga araw na tapos na ay galing sa cloud; ang ngayon ay galing sa buod. May detalyeng bawat araw hanggang 90 araw; ang mas luma ay buwan-buwan. Ang Bawat bantay ay para sa pagsusuri ng cash. Sa Bawat account, username lang ang nasa cloud (walang buong pangalan o phone); ang Walk-in ay walang pangalan.")),
