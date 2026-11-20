@@ -91,10 +91,10 @@
   .p-maintenance { background:var(--warnbg); color:var(--warn); } .p-maintenance i { background:#d97706; }
   .p-offline { background:#e8edf4; color:#334155; } .p-offline i { background:#64748b; }
   .chart { display:flex; align-items:flex-end; gap:10px; height:180px; border-bottom:1px solid var(--line); padding-top:8px; }
-  .chart .col { flex:1 1 0; height:100%; display:flex; align-items:flex-end; justify-content:center; gap:4px; }
-  .chart .col i { width:16px; border-radius:4px 4px 0 0; display:block; min-height:2px; }
+  .chart .col { flex:1 1 0; min-width:0; height:100%; display:flex; align-items:flex-end; justify-content:center; gap:4px; }
+  .chart .col i { width:min(16px, 100%); border-radius:4px 4px 0 0; display:block; min-height:2px; }
   .lbl { display:flex; gap:10px; padding-top:8px; font-size:12px; color:var(--muted); }
-  .lbl div { flex:1 1 0; text-align:center; } .lbl b { display:block; color:var(--ink); }
+  .lbl div { flex:1 1 0; min-width:0; text-align:center; } .lbl b { display:block; color:var(--ink); }
   .legend { display:flex; flex-wrap:wrap; gap:16px; font-size:12.5px; color:var(--muted); margin-bottom:8px; }
   .legend i { display:inline-block; width:10px; height:10px; border-radius:3px; margin-right:6px; vertical-align:0; }
   .empty { color:var(--muted); }
@@ -115,13 +115,37 @@
   @media (max-width: 900px) { .grid2 { grid-template-columns:minmax(0, 1fr); } }
   @media (max-width: 800px) {
     main { padding:16px 14px 92px; }
-    .top { padding:0 14px; } .top .who span { display:none; }
+    .top { padding:0 14px; } .top .who span { display:none; } .top b { min-width:0; line-height:1.15; } .top .who { flex:0 0 auto; gap:6px; } .top button { white-space:nowrap; padding:0 10px; }
     .shell { display:block; }
     .side { position:fixed; left:0; right:0; bottom:0; z-index:5; flex-direction:row; padding:6px; gap:2px; overflow-x:auto; border-top:1px solid #2a4570; }
-    .side a { flex:1 0 76px; flex-direction:column; justify-content:center; gap:3px; font-size:11px; padding:6px 4px; border-radius:10px; text-align:center; position:relative; min-height:52px; }
-    .side .badge { position:absolute; top:2px; right:14px; margin:0; }
+    .side { overflow:hidden; padding:6px 3px; gap:1px; }
+    .side a { flex:1 1 0; min-width:0; flex-direction:column; justify-content:center; gap:3px; font-size:10px; letter-spacing:-.1px; padding:6px 0; border-radius:10px; text-align:center; position:relative; min-height:52px; }
+    .side a .t { display:none; } .side a::after { content:attr(data-short); display:block; max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .side .badge { position:absolute; top:2px; right:calc(50% - 22px); margin:0; }
     .side .shopid { display:none; }
     .kpi { padding:12px 14px; min-height:84px; } .kpi b { font-size:22px; } .kpi .ki { display:none; }
+  }
+
+  /* On a phone everything fits the screen: no page that slides sideways. Wide tables become one small card per row
+     (the column name on the left, the value on the right); the labels are put on the cells by labelTables(). */
+  main, #view, #view > * { min-width:0; max-width:100%; }
+  #view img, #view canvas, #view svg, #view input, #view select, #view textarea { max-width:100%; }
+  @media (max-width: 640px) {
+    .chart { gap:3px; } .chart .col { gap:1px; } .lbl { gap:3px; font-size:11px; }
+    .block { padding:14px 12px; }
+    #view table, #view thead, #view tbody, #view tfoot, #view tr, #view th, #view td { display:block; width:auto; }
+    #view thead { display:none; }
+    #view tbody tr, #view tfoot tr { border-bottom:1px solid var(--line); padding:8px 0; }
+    #view tbody tr:last-child { border-bottom:0; }
+    #view td { display:flex; justify-content:space-between; align-items:baseline; gap:12px; border:0; padding:3px 0; white-space:normal; text-align:right; overflow-wrap:anywhere; }
+    #view td[data-label]::before { content:attr(data-label); color:var(--muted); font-size:12px; text-align:left; flex:0 0 auto; max-width:48%; }
+    #view td[data-label=""]::before { content:none; }
+    #view td:first-child { font-weight:600; }
+    #view td:not([data-label]) { justify-content:flex-start; text-align:left; }
+    #view tbody tr:hover td { background:none; }
+    .fields input[type=date] { width:100%; }
+    .fields label { flex:1 1 140px; }
+    .toolbar input { max-width:none; flex:1 1 auto; }
   }
 
   .pagehead { display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; }
@@ -226,6 +250,26 @@ async function poll() {
   timer = setTimeout(poll, document.hidden ? 15000 : pollDelay());
 }
 document.addEventListener("visibilitychange", () => { if (!document.hidden && idToken) poll(); });
+
+function labelTables(root) {
+  // Each cell gets the name of its column, so a table can show as cards on a phone (CSS above). Cells that span columns keep none.
+  for (const t of root.querySelectorAll("table")) {
+    const heads = [...t.querySelectorAll("thead tr:last-child th")];
+    if (!heads.length) continue;
+    const names = [];
+    for (const h of heads) for (let k = 0; k < (h.colSpan || 1); k++) names.push(h.textContent.trim());
+    for (const tr of t.querySelectorAll("tbody tr, tfoot tr")) {
+      let i = 0;
+      for (const td of tr.children) {
+        if ((td.colSpan || 1) > 1) td.removeAttribute("data-label");
+        else if (names[i] !== undefined && td.getAttribute("data-label") !== names[i]) td.setAttribute("data-label", names[i]);
+        i += td.colSpan || 1;
+      }
+    }
+  }
+}
+new MutationObserver(() => { const v = document.getElementById("view"); if (v) labelTables(v); })
+  .observe(document.documentElement, { childList: true, subtree: true });
 
 function el(tag, attrs, ...kids) {
   const e = document.createElement(tag);
@@ -816,6 +860,7 @@ const SECTIONS = [
   ["log", "Log", '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="3" width="14" height="18" rx="2"/><path d="M9 8h6M9 12h6M9 16h4"/></svg>'],
   ["settings", "Settings", '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/></svg>'],
 ];
+const SHORT = { dashboard: "Home", requests: "Request", accounts: "Account" };
 let section = "dashboard";
 function sectionFromHash() { const k = (location.hash.match(/^#\/(\w+)/) || [])[1]; return SECTIONS.some((s) => s[0] === k) ? k : "dashboard"; }
 function drawSide() {
@@ -823,7 +868,7 @@ function drawSide() {
   const countOf = (s) => (s.pendingList || []).length + (s.resetList || []).length + (((s.food || {}).p || []).length);     // loads, forgotten passwords and food orders that wait
   const waiting = current === "all" ? sum(countOf) : countOf(shops.find((s) => s.shopId === current) || {});
   for (const [key, label, icon] of SECTIONS) {
-    const a = el("a", { href: "#/" + key }, label);
+    const a = el("a", { href: "#/" + key, "data-short": SHORT[key] || label }, el("span", { class: "t" }, label));     // data-short: the name in the menu at the bottom of a phone
     a.insertAdjacentHTML("afterbegin", icon);
     if (key === section) a.setAttribute("aria-current", "page");
     if (key === "requests" && waiting) a.append(el("span", { class: "badge" }, waiting));
