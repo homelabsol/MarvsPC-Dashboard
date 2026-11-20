@@ -148,6 +148,29 @@
     .toolbar input { max-width:none; flex:1 1 auto; }
   }
 
+  /* Settings (v0.9.129): tabs on top and each group in its own card (icon, title, status), as on the admin page of the PC. */
+  .stabs { display:flex; flex-wrap:wrap; gap:4px; background:#e8edf4; padding:4px; border-radius:12px; max-width:100%; justify-self:start; }
+  .stabs button { min-height:36px; padding:0 16px; border:0; border-radius:9px; background:transparent; color:var(--muted); font-weight:600; }
+  .stabs button:hover { background:transparent; color:var(--ink); }
+  .stabs button[aria-pressed="true"] { background:#fff; color:var(--navy); box-shadow:0 1px 2px rgba(16,35,63,.12); }
+  .spanel { display:none; grid-template-columns:repeat(auto-fill, minmax(min(100%, 420px), 1fr)); gap:16px; align-items:start; }
+  .spanel.on { display:grid; }
+  .scard { background:var(--surface); border:1px solid var(--line); border-radius:14px; padding:16px 18px; min-width:0; box-shadow:var(--shadow); display:flex; flex-direction:column; gap:10px; }
+  .scard.wide { grid-column:1 / -1; }
+  .scard > * { margin:0; }
+  .shead { display:flex; align-items:center; gap:10px; }
+  .shead svg { width:22px; height:22px; flex:0 0 22px; fill:none; stroke:var(--navy); stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; }
+  .shead h2 { margin:0; font-size:16px; flex:1; min-width:0; }
+  .spill { font-size:12px; font-weight:600; padding:3px 10px; border-radius:99px; white-space:nowrap; }
+  .spill.ok { background:var(--okbg); color:var(--ok); } .spill.off { background:#eef1f6; color:var(--muted); } .spill.warn { background:var(--warnbg); color:var(--warn); }
+  .sdesc { color:var(--muted); font-size:13.5px; line-height:1.5; }
+  .srow { display:flex; flex-wrap:wrap; gap:8px 10px; align-items:center; border-top:1px solid var(--line); padding-top:10px; }
+  .scard code { word-break:break-all; background:#f4f6f9; padding:6px 10px; border-radius:8px; font-size:13px; }
+  .scard input[type=file] { max-width:100%; min-height:0; padding:6px; }
+  .savebar { position:sticky; bottom:0; z-index:4; display:flex; gap:8px; flex-wrap:wrap; align-items:center; background:var(--surface); border:1px solid var(--line); border-radius:14px; padding:10px 14px; box-shadow:var(--shadow); }
+  .savebar .empty { flex:1 1 200px; font-size:13px; }
+  @media (max-width: 800px) { .savebar { bottom:70px; padding:8px; } .savebar .empty { display:none; } .savebar button { flex:1 1 0; min-width:0; padding:0 8px; white-space:normal; line-height:1.2; } }
+
   .pagehead { display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; }
   .pagehead h1 { margin:0; font-size:22px; }
   .pagehead .actions { display:flex; gap:8px; flex-wrap:wrap; }
@@ -521,9 +544,11 @@ async function callTopic(group) {              // the same topic the Hub works o
 function callTopicBlock(s) {
   const code = el("code", { id: "callTopic", style: "user-select:all" }, "…");
   callTopic(s.shopId).then((t) => { code.textContent = t; }).catch(() => { code.textContent = "Hindi makuha (kailangan ng HTTPS)."; });
-  return el("section", { class: "block", id: "callTopicBlock" }, el("h2", {}, "Tawag ng customer"),
-    el("p", { class: "empty", style: "margin:0 0 8px" }, "Kapag pinindot ng customer ang Tawagan ang owner sa PC, tutunog ang phone mo at lalabas ang pulang alarm dito. Sa phone: i-install ang libreng ntfy app, pindutin ang +, at ilagay ang topic na ito (server: ntfy.sh). Itakda sa pinakamalakas ang tunog. Parang password ang topic: huwag ibigay sa iba."),
-    el("p", { style: "margin:0" }, code));
+  const k = card("call", "Tawag ng customer", null,
+    desc("Kapag pinindot ng customer ang Tawagan ang owner sa PC, tutunog ang phone mo at lalabas ang pulang alarm dito. Sa phone: i-install ang libreng ntfy app, pindutin ang +, at ilagay ang topic na ito (server: ntfy.sh). Itakda sa pinakamalakas ang tunog. Parang password ang topic: huwag ibigay sa iba."),
+    el("div", { class: "srow" }, code));
+  k.id = "callTopicBlock";
+  return k;
 }
 // ---- One shop, many PCs: every Hub (every PC that keeps its own data) sends its own summary. The summaries that name
 // the same groupId are ONE shop here: the numbers are added, the PCs listed together, the waiting requests together. The
@@ -1186,10 +1211,9 @@ function pictureControls(s, c, field, label, hint) {
   remove.onclick = () => { if (confirm(`Alisin ang ${label}? Mawawala ito sa lahat ng PC ng shop.`)) savePicture(s, field, { remove: true }); };
   const dim = field === "wallpaper" ? el("label", { class: "cfgrow" }, el("span", {}, "Dilim sa ibabaw ng larawan"),
     (() => { const sel = el("select", { id: "wpDim" }, ...DIM_TEXT.map((t, i) => el("option", { value: String(i) }, t))); sel.value = String(notes.dim ?? 2); sel.onchange = () => savePicture(s, "wallpaper", { dim: Number(sel.value) }); return sel; })()) : null;
-  return el("div", { class: "cfggrid", style: "margin-top:14px;border-top:1px solid var(--line);padding-top:12px" },
-    el("div", {}, el("b", {}, label), el("span", { class: "empty", style: "margin-left:8px" }, notes.has ? `Meron (${notes.kb} KB)` : "Wala")),
+  return el("div", { class: "cfggrid srow", style: "display:grid" },
     el("div", { style: "display:flex;gap:8px;flex-wrap:wrap;align-items:center" }, file, save, remove), ...(dim ? [dim] : []),
-    el("p", { class: "empty", style: "margin:0" }, hint), msg);
+    ...(hint ? [el("p", { class: "empty", style: "margin:0" }, hint)] : []), msg);
 }
 // The Hub has the new version (its summary says so): the page reads the cloud's copy again, which shows what the Hub really kept.
 function settleConfig() {
@@ -1200,30 +1224,67 @@ function settleConfig() {
     notice = { text: s.configVersion > p.v ? "Ipinatupad ng Hub ang karamihan, pero may mga halaga na tinanggihan nito. Tingnan ang bagong halaga sa ibaba." : "✓ Naipatupad na ng Hub ang mga pagbabago.", until: Date.now() + 12000 };
   }
 }
-// What the PCs of the shop share besides the settings and rates (v0.9.88): the switches, the wallpaper and the GCash QR. Look only: it is changed
-// at a PC (Settings, Cloud), and the other PCs follow. The notes are in the same document the page already read (no extra read).
-function switchesBlock(c, d, s) {
-  const sw = c.switches, wp = c.wallpaper, gq = c.gcash, onoff = (v) => (v ? "Naka-on" : "Patay"), rows = [];
-  if (sw && d && d.sw) {                                                            // the owner may change them here (the right to edit itself is changed at a PC only)
-    const chk = (k, label) => { const b = el("input", { type: "checkbox", id: "sw_" + k }); b.checked = !!d.sw[k]; b.onchange = () => { d.sw[k] = b.checked; }; return el("label", { class: "cfgrow check" }, b, el("span", {}, label)); };
-    const num = (k, label) => { const i = el("input", { type: "number", id: "sw_" + k, value: d.sw[k] ?? "" }); i.oninput = () => { d.sw[k] = i.value; }; return el("label", { class: "cfgrow" }, el("span", {}, label), i); };
-    return el("section", { class: "block", id: "cfgSwitches" }, el("h2", {}, "Iba pang iisa para sa buong shop"),
-      el("div", { class: "cfggrid" }, chk("approve", "Approve mula sa phone"), num("maxPhp", "Pinakamalaki bawat request (₱)"), num("dailyPhp", "Limit bawat araw (₱)"),
-        chk("accounts", "Mga account sa cloud"), chk("journal", "Journal sa cloud"),
-        el("p", { class: "empty", style: "margin:0" }, `Pag-edit ng settings mula sa dashboard: ${onoff(sw.dashEdit)} (sa PC lang ito binabago).`)),
-      pictureControls(s, c, "wallpaper", "Wallpaper ng lock screen", "JPG, PNG o WebP. Pinapaliit dito sa 1920 × 1080 (hanggang 650 KB). Walang blur o animation. Ikaw ang may karapatang gumamit ng larawan."),
-      pictureControls(s, c, "gcash", "GCash QR", "PNG o JPG, hanggang 650 KB. Ipapakita ito sa lock screen ng mga PC."),
-      el("p", { class: "empty", style: "margin:8px 0 0" }, "Ang mga ito ay iisa para sa lahat ng PC ng shop. Ipatutupad ng mga PC sa loob ng mga 1 hanggang 10 minuto."));
+// ----- Settings (v0.9.129): tabs and cards, as on the admin page of the PC -----
+const ICONS = {
+  rates: '<path d="M4 7h16v10H4z"/><circle cx="12" cy="12" r="2.5"/><path d="M7 10v4M17 10v4"/>',
+  shop: '<path d="M3 21h18M5 21V8l7-5 7 5v13M9 21v-6h6v6"/>',
+  phone: '<rect x="7" y="2" width="10" height="20" rx="2"/><path d="M11 18h2"/>',
+  cloud: '<path d="M7 18a5 5 0 0 1-.6-9.96A6 6 0 0 1 18 9a4.5 4.5 0 0 1-.5 9z"/>',
+  call: '<path d="M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2"/>',
+  image: '<rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="8.5" cy="9.5" r="1.5"/><path d="M21 16l-5-5-8 8"/>',
+  qr: '<rect x="4" y="4" width="6" height="6"/><rect x="14" y="4" width="6" height="6"/><rect x="4" y="14" width="6" height="6"/><path d="M14 14h2v2h-2zM18 18h2v2h-2zM14 18h2M18 14h2"/>',
+};
+function card(icon, title, pill, ...kids) {
+  const head = el("div", { class: "shead" });
+  head.insertAdjacentHTML("afterbegin", `<svg viewBox="0 0 24 24" aria-hidden="true">${ICONS[icon] || ""}</svg>`);
+  head.append(el("h2", {}, title));
+  if (pill) head.append(el("span", { class: "spill " + (pill[1] || "") }, pill[0]));
+  return el("section", { class: "scard" }, head, ...kids.filter(Boolean));
+}
+const desc = (t) => el("p", { class: "sdesc" }, t);
+const onPill = (v) => (v ? ["Naka-on", "ok"] : ["Naka-off", "off"]);
+let cfgTab = "rates";
+const CFG_TABS = [["rates", "Rates at settings"], ["cloud", "Phone at cloud"], ["pics", "Wallpaper at QR"]];
+function tabbed(panels) {                              // panels: {rates: [...cards], cloud: [...], pics: [...]}
+  const bar = el("div", { class: "stabs", role: "group", "aria-label": "Mga bahagi ng Settings" });
+  const boxes = {};
+  for (const [k, label] of CFG_TABS) {
+    const b = el("button", { type: "button", "data-tab": k, "aria-pressed": String(k === cfgTab) }, label);
+    b.onclick = () => { cfgTab = k; for (const x of bar.children) x.setAttribute("aria-pressed", String(x.dataset.tab === k)); for (const [n, p] of Object.entries(boxes)) p.classList.toggle("on", n === k); };
+    bar.append(b);
+    boxes[k] = el("div", { class: "spanel" + (k === cfgTab ? " on" : ""), "data-tab": k }, ...(panels[k] || []));
   }
-  if (sw) {
-    rows.push(["Approve mula sa phone", sw.approve ? `Naka-on · hanggang ${peso(sw.maxPhp)} bawat request · ${peso(sw.dailyPhp)} bawat araw` : "Patay"]);
-    rows.push(["Pag-edit ng settings mula sa dashboard", onoff(sw.dashEdit)], ["Mga account sa cloud", onoff(sw.accounts)], ["Journal sa cloud", onoff(sw.journal)]);
-  }
-  rows.push(["Wallpaper ng lock screen", wp && wp.has ? `Meron (${wp.kb} KB)` : "Wala"], ["GCash QR", gq && gq.has ? `Meron (${gq.kb} KB)` : "Wala"]);
-  return el("section", { class: "block", id: "cfgSwitches" }, el("h2", {}, "Iba pang iisa para sa buong shop"),
-    el("table", {}, el("tbody", {}, ...rows.map(([k, v]) => el("tr", {}, el("td", { style: "white-space:normal" }, k), el("td", { style: "white-space:normal" }, v))))),
-    el("p", { class: "empty", style: "margin:8px 0 0" }, sw ? "Pagtingin lang. Baguhin sa admin page ng kahit anong PC (Settings, Cloud); susunod ang ibang PC sa loob ng mga 10 minuto."
-      : "Hindi pa naipapadala ng mga PC ang mga switch. I-update ang mga PC (v0.9.88 pataas)."));
+  return [bar, ...Object.values(boxes)];
+}
+// What the PCs of the shop share besides the settings and rates (v0.9.88): the switches, the wallpaper and the GCash QR. The switches can be changed
+// here when the PCs allow editing from the dashboard (the right to edit itself is changed at a PC only). The notes are in the same document the page already read.
+function switchCards(c, d, s) {
+  const sw = c.switches, wp = c.wallpaper, gq = c.gcash, onoff = (v) => (v ? "Naka-on" : "Naka-off");
+  const edit = !!(sw && d && d.sw);
+  const chk = (k, label) => { const b = el("input", { type: "checkbox", id: "sw_" + k }); b.checked = !!d.sw[k]; b.onchange = () => { d.sw[k] = b.checked; }; return el("label", { class: "cfgrow check" }, b, el("span", {}, label)); };
+  const num = (k, label) => { const i = el("input", { type: "number", id: "sw_" + k, value: d.sw[k] ?? "" }); i.oninput = () => { d.sw[k] = i.value; }; return el("label", { class: "cfgrow" }, el("span", {}, label), i); };
+  const ro = (k, v) => el("div", { class: "cfgrow" }, el("span", { class: "empty" }, k), el("b", {}, v));
+  const none = !sw ? el("p", { class: "notice warn" }, "Hindi pa naipapadala ng mga PC ang mga switch. I-update ang mga PC (v0.9.88 pataas).") : null;
+  const approve = card("phone", "Pag-approve mula sa phone", sw ? onPill(sw.approve) : null,
+    desc("I-approve o i-reject ang mga request dito. Tingnan muna sa GCash app kung pumasok ang bayad. Ang halaga ay laging galing sa PC."),
+    none, sw ? el("div", { class: "cfggrid srow", id: "cfgSwitches" }, ...(edit
+      ? [chk("approve", "Approve mula sa phone"), num("maxPhp", "Pinakamalaki bawat request (₱)"), num("dailyPhp", "Limit bawat araw (₱)")]
+      : [ro("Approve mula sa phone", onoff(sw.approve)), ro("Bawat request", peso(sw.maxPhp)), ro("Bawat araw", peso(sw.dailyPhp))])) : null);
+  const cloudCard = card("cloud", "Cloud ng shop", sw ? onPill(sw.accounts) : null,
+    desc("Mga account at balance sa cloud, at ang kopya ng ledger (journal) para maibalik kung masira ang PC."),
+    sw ? el("div", { class: "cfggrid srow" }, ...(edit ? [chk("accounts", "Mga account sa cloud"), chk("journal", "Journal sa cloud")] : [ro("Mga account sa cloud", onoff(sw.accounts)), ro("Journal sa cloud", onoff(sw.journal))]),
+      ro("Pag-edit mula sa dashboard", onoff(sw.dashEdit) + " (sa PC lang ito binabago)")) : null);
+  const picCard = (field, icon, label, notes, hint) => {
+    const k = card(icon, label, notes && notes.has ? [`Meron (${notes.kb} KB)`, "ok"] : ["Wala", "off"], desc(hint));
+    if (edit) k.append(pictureControls(s, c, field, label, ""));
+    else k.append(el("p", { class: "empty srow" }, "Pagtingin lang. Baguhin sa admin page ng kahit anong PC, o i-on ang pag-edit mula sa dashboard sa PC."));
+    return k;
+  };
+  return {
+    cloud: [approve, cloudCard],
+    pics: [picCard("wallpaper", "image", "Wallpaper ng lock screen", wp, "JPG, PNG o WebP. Pinapaliit dito sa 1920 × 1080 (hanggang 650 KB). Iisa para sa lahat ng PC ng shop."),
+           picCard("gcash", "qr", "GCash QR", gq, "PNG o JPG, hanggang 650 KB. Ipapakita ito sa lock screen ng mga PC.")],
+  };
 }
 function settingsBlock(s, branch) {
   const st = cfgCache[s.shopId], title = el("h2", {}, branch ? `Settings at rates: ${branch}` : "Settings at rates");
@@ -1242,18 +1303,21 @@ function settingsBlock(s, branch) {
   const pend = cfgPending[s.shopId], late = pend && Date.now() - pend.at > 90000;
   const head = el("section", { class: "block" }, title,
     el("p", { class: "empty", style: "margin:0" }, `Bersyon ${c.version} · huling pagbabago: ${at}. ` + (editable ? "Puwede mong palitan dito; ipatutupad ito ng Hub." : "Pagtingin lang ito.")),
-    ...(editable ? [] : [el("p", { class: "notice warn", style: "margin:10px 0 0" }, "Naka-off ang pag-edit mula sa dashboard. I-on sa admin page ng shop (Settings, Cloud, Pag-edit ng Settings at rates mula sa dashboard)" + ((s.members || []).length > 1 ? " sa bawat PC na may Hub." : ".") )]),
+    ...(editable ? [] : [el("p", { class: "notice warn", style: "margin:10px 0 0" }, "Naka-off ang pag-edit mula sa dashboard. I-on sa admin page ng shop (Settings, Cloud, Pag-edit mula sa dashboard)" + ((s.members || []).length > 1 ? " sa bawat PC na may Hub." : ".") )]),
     ...(notice && Date.now() < notice.until && !pend ? [el("p", { class: "notice", style: "margin:10px 0 0" }, notice.text)] : []),
     ...(pend ? [el("p", { class: "notice warn", style: "margin:10px 0 0" }, late ? "Hindi pa naipapatupad ng Hub. Patay ba ito, o walang internet? Ipapatupad ito kapag bumalik." : `Naipadala (bersyon ${pend.v}). Hinihintay ang Hub…`)] : []),
     ...((cfgMsg[s.shopId] || {}).bad ? [el("div", { class: "notice warn", style: "margin:10px 0 0;font-weight:500", id: "cfgErrors" }, ...cfgMsg[s.shopId].bad.map((m) => el("div", {}, m)))] : []));
+  const callCard = callTopicBlock(s);
   if (!editable) {                                           // read only: tables
     const rates = el("tbody"), sets = el("tbody");
     for (const r of (c.rates || []).slice().sort((a, b) => a.amount - b.amount)) rates.append(el("tr", {}, el("td", {}, el("b", {}, peso(r.amount))), el("td", { class: "num" }, mins(r.minutes))));
     if (!(c.rates || []).length) rates.append(el("tr", {}, el("td", { colspan: 2, class: "empty" }, "Walang rate.")));
     for (const [k, v] of Object.entries(c.settings || {})) sets.append(el("tr", {}, el("td", { style: "white-space:normal" }, SETTING_LABELS[k] || k), el("td", { style: "white-space:normal" }, shown(k, v))));
-    return el("div", { class: "page" }, head, el("div", { class: "two" },
-      el("section", { class: "block" }, el("h2", {}, "Mga rate"), el("table", {}, el("thead", {}, el("tr", {}, el("th", {}, "Bayad"), el("th", { class: "num" }, "Oras na makukuha"))), rates)),
-      el("section", { class: "block", style: "overflow-x:auto" }, el("h2", {}, "Settings"), el("table", {}, el("thead", {}, el("tr", {}, el("th", {}, "Setting"), el("th", {}, "Halaga"))), sets))), switchesBlock(c), callTopicBlock(s));
+    const sc = switchCards(c, null, s);
+    return el("div", { class: "page" }, head, ...tabbed({
+      rates: [card("rates", "Mga rate", [`${(c.rates || []).length} rate`, "ok"], el("table", {}, el("thead", {}, el("tr", {}, el("th", {}, "Bayad"), el("th", { class: "num" }, "Oras na makukuha"))), rates)),
+              card("shop", "Settings ng shop", null, el("table", {}, el("thead", {}, el("tr", {}, el("th", {}, "Setting"), el("th", {}, "Halaga"))), sets))],
+      cloud: [...sc.cloud, callCard], pics: sc.pics }));
   }
   const d = draftOf(s.shopId, c), field = (k, label, kind) => {
     const id = "cfg_" + k;
@@ -1275,12 +1339,13 @@ function settingsBlock(s, branch) {
   const add = el("button", { type: "button", id: "cfgAddRate" }, "Magdagdag ng rate"); add.onclick = () => { if (d.rates.length < 20) { d.rates.push({ amount: "", minutes: "" }); drawRates(); } };
   const save = el("button", { type: "button", class: "primary", id: "cfgSave" }, "I-save ang mga pagbabago"); save.disabled = !!pend && !late; save.onclick = () => saveConfig(s);
   const undo = el("button", { type: "button", id: "cfgUndo" }, "Ibalik sa kasalukuyan"); undo.onclick = () => { delete cfgDraft[s.shopId]; delete cfgMsg[s.shopId]; draw(); };
-  return el("div", { class: "page", id: "cfgForm" }, head, el("div", { class: "two" },
-    el("section", { class: "block" }, el("h2", {}, "Mga rate"), rateRows, el("div", { style: "margin-top:10px" }, add),
-      el("p", { class: "empty", style: "margin:8px 0 0" }, "Bayad: ₱1 hanggang ₱10,000. Oras: 1 hanggang 100,000 minuto. Hanggang 20 rate, walang parehong bayad.")),
-    el("section", { class: "block" }, el("h2", {}, "Settings"), el("div", { class: "cfggrid" }, SETTING_FIELDS.map(([k, label, kind]) => field(k, label, kind))))),
-    switchesBlock(c, d, s), callTopicBlock(s),
-    el("div", { style: "display:flex;gap:8px;flex-wrap:wrap" }, save, undo));
+  const sc = switchCards(c, d, s);
+  return el("div", { class: "page", id: "cfgForm" }, head, ...tabbed({
+    rates: [card("rates", "Mga rate", [`${d.rates.length} rate`, "ok"], rateRows, el("div", {}, add),
+              desc("Bayad: ₱1 hanggang ₱10,000. Oras: 1 hanggang 100,000 minuto. Hanggang 20 rate, walang parehong bayad.")),
+            card("shop", "Settings ng shop", null, el("div", { class: "cfggrid" }, SETTING_FIELDS.map(([k, label, kind]) => field(k, label, kind))))],
+    cloud: [...sc.cloud, callCard], pics: sc.pics }),
+    el("div", { class: "savebar" }, el("span", { class: "empty" }, "Ang rates, settings at mga switch ay sine-save nang sabay. Ang wallpaper at QR ay may sariling I-upload."), undo, save));
 }
 
 // ----- Benta at ulat: sales per day, week, month and year, with a custom range, a comparison, and the reports -----
