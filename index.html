@@ -171,6 +171,12 @@
   .savebar .empty { flex:1 1 200px; font-size:13px; }
   @media (max-width: 800px) { .savebar { bottom:70px; padding:8px; } .savebar .empty { display:none; } .savebar button { flex:1 1 0; min-width:0; padding:0 8px; white-space:normal; line-height:1.2; } }
 
+  .pcgrid { display:grid; grid-template-columns:repeat(auto-fill, minmax(min(100%, 170px), 1fr)); gap:12px; }
+  .pctile { border:1px solid var(--line); border-radius:12px; padding:12px; background:var(--surface); display:flex; flex-direction:column; gap:6px; min-width:0; }
+  .pctile.s-offline { background:#f6f8fb; }
+  .pchead { display:flex; align-items:center; justify-content:space-between; gap:8px; flex-wrap:wrap; } .pchead b { font-size:16px; }
+  .pcline { font-size:13px; color:var(--muted); min-height:18px; overflow-wrap:anywhere; } .pcline.ver { font-size:12px; }
+  .pcoff { margin-top:4px; min-height:36px; } .pcbusy { margin-top:4px; font-size:13px; font-weight:600; color:var(--warn); }
   .pagehead { display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; }
   .pagehead h1 { margin:0; font-size:22px; }
   .pagehead .actions { display:flex; gap:8px; flex-wrap:wrap; }
@@ -574,7 +580,7 @@ function joinHubs(id, ms) {
     shopId: id, shopName: ms[0].shopName, members: ms, updatedAt: ms.map((m) => m.updatedAt).sort().pop(),
     today: { income: t("income"), consumed: Math.round(t("consumed") * 100) / 100, cash: t("cash"), gcash: t("gcash"), walkins: t("walkins"), loads: t("loads"),
              minutes: t("minutes"), foodT: t("foodT"), foodN: t("foodN"), foodC: t("foodC"), foodG: t("foodG"), pending: t("pending"), accounts: Math.max(0, ...ms.map((m) => (m.today || {}).accounts || 0)) },   // the accounts are one set for the shop: the biggest count, not the sum
-    pcs: namedApart(ms.flatMap((m) => { const down = !hubState(m).ok; return (m.pcs || []).map((p) => ({ ...p, status: down ? "offline" : p.status, _hub: m.hubId || m.shopId })); }))   // a PC of a Hub that is gone is not online
+    pcs: namedApart(ms.flatMap((m) => { const down = !hubState(m).ok; return (m.pcs || []).map((p) => ({ ...p, status: down ? "offline" : p.status, _hub: m.hubId || m.shopId, _shop: m.shopId })); }))   // a PC of a Hub that is gone is not online
            .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true })),
     week: Object.values(week).sort((a, b) => a.date.localeCompare(b.date)), top, topKnown: ms.some((m) => Array.isArray(m.topup)),
     recent: (ms.length > 1 ? [...recent.values()].sort((a, b) => String(b.c).localeCompare(String(a.c))) : [...recent.values()]).slice(0, 30),
@@ -682,6 +688,44 @@ function pcTable(s) {
   if (!s.pcs.length) body.append(el("tr", {}, el("td", { colspan: 5, class: "empty" }, "Wala pang PC.")));
   return el("section", { class: "block", style: "overflow-x:auto" }, el("h2", {}, "Mga PC"),
     el("table", {}, el("thead", {}, el("tr", {}, el("th", {}, "PC"), el("th", {}, "Status"), el("th", {}, "Naglalaro"), el("th", {}, "Natitirang oras"), el("th", {}, "Bersyon"))), body));
+}
+// ----- Mga PC (v0.9.130): a card for every PC, and I-shutdown when the PCs allow it (admin page of the PC, Settings, Cloud) -----
+// The order is ONE tiny note in the Realtime Database, decisions/<owner>/<the Hub of that PC>/<pc id>~shutdown, like Approve.
+let shutdownSent = {};
+async function shutdownPc(pc, button) {
+  const who = pc.status === "in_use" && pc.user ? ` May naglalaro: si ${pc.user}. Matatapos ang session niya at maiiwan sa account niya ang natitirang oras.` : "";
+  if (!confirm(`I-shutdown ang ${pc.name}?${who} Mamamatay ang PC sa loob ng mga 1 minuto.`)) return;
+  button.disabled = true;
+  try {
+    const r = await fetch(`${RTDB}/decisions/${uid}/${pc._shop}/${encodeURIComponent(pc.id + "~shutdown")}.json?auth=${encodeURIComponent(idToken)}`,
+      { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ d: "approve", at: { ".sv": "timestamp" } }) });
+    if (!r.ok) throw new Error("denied");
+    shutdownSent[pc.id] = Date.now();
+    notice = { text: `Naipadala ang shutdown ng ${pc.name}. Mamamatay ito sa loob ng mga 1 minuto.`, until: Date.now() + 15000 };
+    fastUntil = Date.now() + 90000; draw(); clearTimeout(timer); timer = setTimeout(poll, 2500);
+  } catch (e) { button.disabled = false; alert("Hindi naipadala. Subukan ulit."); }
+}
+function pcsPage(s, label) {
+  for (const [id, at] of Object.entries(shutdownSent)) if (Date.now() - at > 180000 || s.pcs.some((p) => p.id === id && p.status === "offline")) delete shutdownSent[id];
+  const anySd = s.pcs.some((p) => p.sd), grid = el("div", { class: "pcgrid" });
+  for (const pc of s.pcs) {
+    const k = pcKey(pc), left = pc.status === "in_use" && pc.endsAt ? clock(pc.endsAt - Date.now() / 1000) : "";
+    const tile = el("div", { class: "pctile s-" + k, "data-pc": pc.name },
+      el("div", { class: "pchead" }, el("b", {}, pc.name), el("span", { class: "pill p-" + k }, el("i"), STATUS[k] || k)),
+      el("div", { class: "pcline" }, pc.status === "in_use" && pc.user ? `${pc.user}` : k === "offline" ? "Naka-off o walang koneksyon" : "Walang naglalaro"),
+      el("div", { class: "pcline", "data-ends": pc.status === "in_use" && pc.endsAt ? pc.endsAt : "" }, left ? left : ""),
+      el("div", { class: "pcline ver" }, pc.ver ? "v" + pc.ver : "—"));
+    if (shutdownSent[pc.id] && pc.status !== "offline") tile.append(el("div", { class: "pcbusy" }, "Ini-shutdown…"));
+    else if (pc.sd && pc.id && pc.status !== "offline") {
+      const b = el("button", { type: "button", class: "btn-no pcoff" }, "I-shutdown"); b.onclick = () => shutdownPc(pc, b); tile.append(b);
+    }
+    grid.append(tile);
+  }
+  if (!s.pcs.length) grid.append(el("p", { class: "empty" }, "Wala pang PC."));
+  return el("section", { class: "block" }, el("div", { class: "pagehead" }, el("h2", { style: "margin:0" }, "Mga PC" + (label ? ` · ${label}` : "")), el("span", { class: "empty" }, `Online ${online(s)} / ${s.pcs.length}`)),
+    ...(notice && Date.now() < notice.until && section === "pcs" ? [el("p", { class: "notice", style: "margin:10px 0 0" }, notice.text)] : []),
+    ...(anySd ? [] : [el("p", { class: "notice warn", style: "margin:10px 0 0" }, "Naka-off ang shutdown mula sa dashboard. I-on sa admin page ng PC: Settings, Cloud, Shutdown mula sa dashboard.")]),
+    el("div", { style: "margin-top:14px" }, grid));
 }
 function topBlock(s, label) {                              // the ten who loaded the most since the start: not tied to a date range, so it stays
   const body = el("tbody");
@@ -880,12 +924,13 @@ const SECTIONS = [
   ["dashboard", "Dashboard", '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>'],
   ["requests", "Mga request", '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 13l3-8h10l3 8v6H4z"/><path d="M4 13h5l1 2h4l1-2h5"/></svg>'],
   ["accounts", "Mga account", '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.2"/><path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6"/><circle cx="17.5" cy="9" r="2.5"/><path d="M17 14.2c2.4.3 4 2.3 4 4.8"/></svg>'],
+  ["pcs", "Mga PC", '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M9 20h6M12 16v4"/></svg>'],
   ["sales", "Benta", '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>'],
   ["top", "Top 10", '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 21h8M12 17v4M7 4h10v5a5 5 0 0 1-10 0V4z"/><path d="M17 5h3v2a3 3 0 0 1-3 3M7 5H4v2a3 3 0 0 0 3 3"/></svg>'],
   ["log", "Log", '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="3" width="14" height="18" rx="2"/><path d="M9 8h6M9 12h6M9 16h4"/></svg>'],
   ["settings", "Settings", '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/></svg>'],
 ];
-const SHORT = { dashboard: "Home", requests: "Request", accounts: "Account" };
+const SHORT = { dashboard: "Home", requests: "Request", accounts: "Account", pcs: "PC" };
 let section = "dashboard";
 function sectionFromHash() { const k = (location.hash.match(/^#\/(\w+)/) || [])[1]; return SECTIONS.some((s) => s[0] === k) ? k : "dashboard"; }
 function drawSide() {
@@ -961,7 +1006,7 @@ function draw() {
   if (shops.length > 1) { mk("all", "Lahat ng branch"); for (const s of shops) mk(s.shopId, s.shopName); }
   section = sectionFromHash();
   drawSide();
-  const page = section === "requests" ? stacked(requestsBlock) : section === "accounts" ? stacked(accountsBlock)
+  const page = section === "requests" ? stacked(requestsBlock) : section === "accounts" ? stacked(accountsBlock) : section === "pcs" ? stacked(pcsPage)
     : section === "log" ? stacked(logBlock) : section === "settings" ? stacked(settingsBlock)
     : section === "top" ? stacked(topBlock) : section === "sales" ? salesView() : current === "all" ? allShops() : oneShop(shops.find((s) => s.shopId === current));
   $("#view").replaceChildren(page);
