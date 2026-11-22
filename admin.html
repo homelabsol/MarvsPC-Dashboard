@@ -39,11 +39,13 @@
   .panel { background:var(--surface); border:1px solid var(--line); border-radius:12px; overflow:hidden; }
   .scroll { overflow-x:auto; }
   .grid { min-width:1080px; }
-  .row { display:grid; grid-template-columns:minmax(0,1.3fr) minmax(0,1fr) minmax(0,1.4fr) minmax(0,1.2fr) minmax(0,1fr) minmax(0,1.7fr) minmax(0,.7fr) minmax(0,.9fr); gap:12px; align-items:center; padding:14px 20px; border-bottom:1px solid var(--line); font-size:14px; cursor:pointer; }
+  .row { display:grid; grid-template-columns:minmax(0,1.3fr) minmax(0,.9fr) minmax(0,1.9fr) minmax(0,1.1fr) minmax(0,1fr) minmax(0,1.4fr) minmax(0,.7fr) minmax(0,.9fr); gap:12px; align-items:center; padding:14px 20px; border-bottom:1px solid var(--line); font-size:14px; cursor:pointer; }
   .row.head { font-size:12px; font-weight:600; color:var(--muted); text-transform:uppercase; letter-spacing:.04em; background:#f9fafb; cursor:default; }
   .row.open { background:#f0f8f7; }
   .row:focus-visible { outline:3px solid #f5b82e; outline-offset:-3px; }
   .key { font-family:ui-monospace, Menlo, Consolas, monospace; font-size:12.5px; background:#f1f4f7; padding:3px 7px; border-radius:6px; }
+  .keycopy { display:inline-flex; align-items:center; gap:6px; flex-wrap:wrap; } .keycopy .key { white-space:nowrap; }
+  .keycopy .copy { font-size:12px; padding:3px 8px; min-height:0; border-radius:6px; cursor:pointer; white-space:nowrap; }
   .chip { display:inline-flex; align-items:center; gap:6px; padding:4px 10px; border-radius:999px; font-size:12.5px; font-weight:600; white-space:nowrap; }
   .chip i { width:7px; height:7px; border-radius:50%; display:inline-block; background:currentColor; }
   .ok { background:var(--okbg); color:var(--ok); } .warn { background:var(--warnbg); color:var(--warn); } .bad { background:var(--badbg); color:var(--bad); } .mute { background:var(--mutebg); color:var(--mute); }
@@ -130,6 +132,18 @@
           <p class="note">Hindi pa ginagamit. Kapag inilagay ng client sa isang unit, makikita mo rito kung saang shop at unit.</p></div>
       </div>
     </section>
+
+    <section class="panel" id="emgPanel" style="padding:20px 24px">
+      <h2 style="font-size:17px">Emergency code</h2>
+      <p class="note" style="margin-top:4px">Para sa shop na tumigil dahil sa lisensya (walang internet, sira ang cloud, o may problema ang key). Ibibigay ng owner ang numero na nasa admin page niya; ibigay mo sa kanya ang code. Bubukas ang system nang 3 araw, kahit walang internet. Isang beses lang magagamit ang bawat code.</p>
+      <div class="flex" style="margin-top:12px;align-items:flex-end">
+        <label id="emgKeyBox">Emergency key (isang beses lang ilalagay sa browser na ito)<input id="emgKey" type="password" autocomplete="off" style="width:320px"></label>
+        <label>Numero mula sa shop<input id="emgReq" inputmode="numeric" maxlength="9" placeholder="1234-5678" style="width:160px"></label>
+        <button class="main" type="button" id="emgMake">Gumawa ng emergency code</button>
+        <button type="button" id="emgForget" class="hidden">Palitan ang emergency key</button>
+      </div>
+      <p class="note" id="emgOut" style="margin-top:10px"></p>
+    </section>
   </main>
 </div>
 
@@ -144,6 +158,18 @@ let TEST_API = "", AUTH = "https://identitytoolkit.googleapis.com/v1", TOKEN = "
 const $ = (s) => document.querySelector(s);
 const RT = "marvspc_admin_rt", DOCS = () => `${STORE}/projects/${PROJECT}/databases/(default)/documents`;
 const ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789", WARN_DAYS = 14;
+// ----- (v0.9.148) Emergency code: HMAC-SHA256 of the shop's number with the emergency key (the same as hub/license.py) -----
+async function emergencyCode(keyHex, request) {
+  const digits = String(request).replace(/\D/g, "");
+  const raw = new Uint8Array(keyHex.match(/../g).map((h) => parseInt(h, 16)));
+  const k = await crypto.subtle.importKey("raw", raw, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const mac = new Uint8Array(await crypto.subtle.sign("HMAC", k, new TextEncoder().encode("emg|" + digits)));
+  let n = 0; for (let i = 0; i < 6; i++) n = n * 256 + mac[i];
+  let out = ""; for (let i = 0; i < 8; i++) { out += ALPHABET[n % 31]; n = Math.floor(n / 31); }
+  return "EMG-" + out.slice(0, 4) + "-" + out.slice(4);
+}
+function emgKeyNow() { try { return localStorage.getItem("emgKey") || ""; } catch (e) { return ""; } }
+function emgDraw() { const has = !!emgKeyNow(); document.getElementById("emgKeyBox").classList.toggle("hidden", has); document.getElementById("emgForget").classList.toggle("hidden", !has); }
 let idToken = null, uid = null, keys = [], shops = [], fetchedAt = null;
 
 function el(tag, attrs, ...kids) {
@@ -242,6 +268,21 @@ async function load() {
   fetchedAt = new Date(); $("#fetched").textContent = "Huling refresh: " + fetchedAt.toLocaleTimeString("fil-PH", { hour: "numeric", minute: "2-digit" });
   draw();
 }
+// (v0.9.150) A key with a Kopyahin button (user: "hindi ko ma-copy, hirap kuhain"); the click does not open or close the row.
+function keyCopy(id) {
+  const b = el("button", { type: "button", class: "copy", "aria-label": "Kopyahin ang " + id }, "Kopyahin");
+  b.onclick = async (e) => {
+    e.stopPropagation();
+    let ok = false;
+    try { await navigator.clipboard.writeText(id); ok = true; } catch (err) {
+      const t = document.createElement("textarea"); t.value = id; document.body.append(t); t.select();
+      try { ok = document.execCommand("copy"); } catch (e2) {} t.remove();
+    }
+    b.textContent = ok ? "Nakopya ✓" : "Hindi nakopya"; setTimeout(() => { b.textContent = "Kopyahin"; }, 1500);
+  };
+  b.onkeydown = (e) => e.stopPropagation();
+  return el("span", { class: "keycopy" }, el("span", { class: "key" }, id), b);
+}
 function say(sel, text, kind) { const e = $(sel); e.textContent = text || ""; e.className = "note " + (kind || ""); }
 
 // ---- what the shops of a key are doing (from their summaries) ----
@@ -318,7 +359,7 @@ function draw() {
       if (show) for (const k of unused) {
         const open = openKey === k.id, st = judge(k);
         const row = el("div", { class: "row" + (open ? " open" : ""), role: "button", tabindex: "0", "aria-expanded": String(open), "data-key": k.id },
-          el("div", {}, el("b", {}, k.label || "—"), el("div", { class: "muted", style: "font-size:12.5px" }, "Wala pang nag-activate")), el("div", {}, "—"), el("div", {}, el("span", { class: "key" }, k.id)),
+          el("div", {}, el("b", {}, k.label || "—"), el("div", { class: "muted", style: "font-size:12.5px" }, "Wala pang nag-activate")), el("div", {}, "—"), el("div", {}, keyCopy(k.id)),
           el("div", {}, el("div", { style: "font-size:13px;font-weight:600" }, `0 / ${k.max}`), el("div", { class: "bar" }, el("i", { style: "width:0" }))),
           el("div", {}, fmtDay(k.to)), el("div", {}, el("span", { class: "chip " + st.cls }, el("i"), st.text)), el("div", {}, "0"), el("div", { class: "muted" }, "—"));
         const toggle = () => { openKey = open ? null : k.id; draw(); };
@@ -337,7 +378,7 @@ function ownerDetail(o) {
   o.keys.forEach((k, n) => {
     const st = judge(k);
     wrap.append(el("div", { style: "padding:14px 20px 0;display:flex;flex-wrap:wrap;gap:10px;align-items:center", "data-key": k.id },
-      el("span", { class: "key" }, k.id), el("span", { class: "muted" }, `hanggang ${fmtDay(k.to)} · ${usedOf(k)} / ${k.max} unit`), el("span", { class: "chip " + st.cls }, el("i"), st.text)), detail(k, n));
+      keyCopy(k.id), el("span", { class: "muted" }, `hanggang ${fmtDay(k.to)} · ${usedOf(k)} / ${k.max} unit`), el("span", { class: "chip " + st.cls }, el("i"), st.text)), detail(k, n));
   });
   const add = el("button", { type: "button", id: "addKeyFor", style: "margin:0 20px 16px" }, "+ Dagdag na key para kay " + o.name);
   add.onclick = () => { $("#kLabel").value = o.name; $("#kLabel").scrollIntoView({ block: "center" }); $("#kLabel").focus(); };
@@ -590,6 +631,23 @@ $("#make").onclick = async () => {
   $("#made").classList.remove("hidden");
   await load();
 };
+
+// ---- emergency code ----
+$("#emgMake").onclick = async () => {
+  let key = emgKeyNow();
+  if (!key) {
+    key = $("#emgKey").value.trim().toLowerCase();
+    if (!/^[0-9a-f]{48}$/.test(key)) return say("#emgOut", "Mali ang emergency key (48 na titik at numero).", "err");
+    try { localStorage.setItem("emgKey", key); } catch (e) {}
+    $("#emgKey").value = ""; emgDraw();
+  }
+  const req = $("#emgReq").value.replace(/\D/g, "");
+  if (req.length !== 8) return say("#emgOut", "Ilagay ang 8 numero na nasa admin page ng shop (hal. 1234-5678).", "err");
+  const code = await emergencyCode(key, req);
+  say("#emgOut", `Emergency code para sa ${req.slice(0, 4)}-${req.slice(4)}: ${code}`, "good");
+};
+$("#emgForget").onclick = () => { try { localStorage.removeItem("emgKey"); } catch (e) {} emgDraw(); };
+emgDraw();
 
 // ---- start ----
 $("#find").oninput = draw;
