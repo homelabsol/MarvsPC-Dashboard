@@ -1112,6 +1112,7 @@ const SETTING_LABELS = { shop_name: "Pangalan ng shop", idle_logout_minutes: "Au
   auto_shutdown_minutes: "Auto-shutdown (minuto)", connection_grace_seconds: "Palugit kapag nawala ang koneksyon (segundo)", internet_policy: "Kapag walang internet", custom_amount_enabled: "Ibang halaga ng customer" };
 const VALUE_LABELS = { after_session: { close_apps: "Isara ang apps", restart: "I-restart ang PC" }, internet_policy: { continue: "Tuloy ang shop", walkin_only: "Walk-in lang" } };
 function toFs(v) {
+  if (v === null || v === undefined) return { nullValue: null };
   if (typeof v === "string") return { stringValue: v };
   if (typeof v === "boolean") return { booleanValue: v };
   if (typeof v === "number") return Number.isInteger(v) ? { integerValue: String(v) } : { doubleValue: v };
@@ -1391,7 +1392,7 @@ function settingsBlock(s, branch) {
     return el("div", { class: "page" }, head, ...tabbed({
       rates: [card("rates", "Mga rate", [`${(c.rates || []).length} rate`, "ok"], el("table", {}, el("thead", {}, el("tr", {}, el("th", {}, "Bayad"), el("th", { class: "num" }, "Oras na makukuha"))), rates)),
               card("shop", "Settings ng shop", null, el("table", {}, el("thead", {}, el("tr", {}, el("th", {}, "Setting"), el("th", {}, "Halaga"))), sets))],
-      cloud: [...sc.cloud, callCard], pics: sc.pics }));
+      cloud: [...sc.cloud, callCard], pics: [...sc.pics, annCard(s, false)] }));
   }
   const d = draftOf(s.shopId, c), field = (k, label, kind) => {
     const id = "cfg_" + k;
@@ -1418,8 +1419,65 @@ function settingsBlock(s, branch) {
     rates: [card("rates", "Mga rate", [`${d.rates.length} rate`, "ok"], rateRows, el("div", {}, add),
               desc("Bayad: ₱1 hanggang ₱10,000. Oras: 1 hanggang 100,000 minuto. Hanggang 20 rate, walang parehong bayad.")),
             card("shop", "Settings ng shop", null, el("div", { class: "cfggrid" }, SETTING_FIELDS.map(([k, label, kind]) => field(k, label, kind))))],
-    cloud: [...sc.cloud, callCard], pics: sc.pics }),
+    cloud: [...sc.cloud, callCard], pics: [...sc.pics, annCard(s, true)] }),
     el("div", { class: "savebar" }, el("span", { class: "empty" }, "Ang rates, settings at mga switch ay sine-save nang sabay. Ang wallpaper at QR ay may sariling I-upload."), undo, save));
+}
+
+// ----- (v0.9.152) The Anunsyo of the Game Menu: up to 3 short messages and a contact line, shown in a box beside the games.
+// It lives in the look of config/gamemenu (no new Rules). Saving writes that document and the note in config/main (version + 1,
+// by: dashboard) together; the Hubs take it only while the owner allowed editing from the dashboard at a PC.
+const annCache = {}, annMsg = {}, annDraft = {};
+const ANN_LEN = 160, ANN_CONTACT = 100;
+function annLoad(s) {
+  annCache[s.shopId] = { busy: true };
+  get(`${STORE}/${docUrl(s.shopId)}/config/gamemenu`)
+    .then(([r, d]) => { annCache[s.shopId] = r.ok ? { doc: fromFs({ mapValue: { fields: d.fields } }) } : { error: r.status === 404 ? "none" : "denied" }; })
+    .catch(() => { annCache[s.shopId] = { error: "denied" }; })
+    .finally(() => { if (section === "settings") draw(); });
+}
+function annCard(s, editable) {
+  const st = annCache[s.shopId];
+  if (!st) annLoad(s);
+  const msg = annMsg[s.shopId];
+  const extra = msg ? [el("p", { class: "notice" + (msg.bad ? " warn" : ""), style: "margin:10px 0 0", id: "annNote" }, msg.bad || msg.ok)] : [];
+  if (!st || st.busy) return card("shop", "Anunsyo sa Game Menu", null, el("p", { class: "empty" }, "Sandali…"));
+  if (st.error) return card("shop", "Anunsyo sa Game Menu", null, desc(st.error === "none" ? "Wala pang Game Menu ng shop sa cloud. Gumawa muna ng Game Menu sa admin page ng PC." : "Hindi makuha ang Game Menu mula sa cloud."));
+  const look = st.doc.look || {}, ann = look.ann || { msgs: [], contact: "" };
+  if (!editable) {
+    return card("shop", "Anunsyo sa Game Menu", [ann.msgs && ann.msgs.length ? `${ann.msgs.length} mensahe` : "Wala", ann.msgs && ann.msgs.length ? "ok" : ""],
+      ...(ann.msgs || []).map((m) => el("p", { style: "margin:4px 0" }, "• " + m)), ann.contact ? desc("Contact: " + ann.contact) : null,
+      desc("Lumalabas sa kanan ng Game Menu ng customer. Para mapalitan dito, i-on ang pag-edit mula sa dashboard sa admin page ng PC."), ...extra);
+  }
+  const d = annDraft[s.shopId] = annDraft[s.shopId] || { msgs: [0, 1, 2].map((i) => (ann.msgs || [])[i] || ""), contact: ann.contact || "" };
+  const inputs = d.msgs.map((m, i) => { const x = el("input", { type: "text", maxlength: ANN_LEN, value: m, id: "annMsg" + i, placeholder: ["hal. PROMO: ₱20 = 1 oras at 10 minuto ngayong Sabado!", "hal. Bagong game: Black Myth Wukong", "hal. Bawal kumain malapit sa keyboard"][i] }); x.oninput = () => { d.msgs[i] = x.value; }; return el("label", { class: "cfgrow" }, el("span", {}, `Mensahe ${i + 1}`), x); });
+  const contact = el("input", { type: "text", maxlength: ANN_CONTACT, value: d.contact, id: "annContact", placeholder: "hal. GCash 0917 123 4567 · FB: MarvsPisonet" }); contact.oninput = () => { d.contact = contact.value; };
+  const save = el("button", { type: "button", class: "primary", id: "annSave" }, "I-save ang anunsyo"); save.onclick = () => saveAnn(s);
+  return card("shop", "Anunsyo sa Game Menu", [ann.msgs && ann.msgs.length ? `${ann.msgs.length} mensahe` : "Wala", ann.msgs && ann.msgs.length ? "ok" : ""],
+    el("div", { class: "cfggrid" }, ...inputs, el("label", { class: "cfgrow" }, el("span", {}, "Contact (isang linya)"), contact)),
+    desc(`Hanggang 3 maikling mensahe (${ANN_LEN} na titik bawat isa). Lumalabas sa kahon sa kanan ng Game Menu ng customer; walang laman = walang kahon. Iisa para sa lahat ng PC ng shop.`),
+    el("div", {}, save), ...extra);
+}
+async function saveAnn(s) {
+  const d = annDraft[s.shopId], clean = (t, n) => String(t || "").split(/\s+/).join(" ").trim().slice(0, n);
+  const ann = { msgs: d.msgs.map((m) => clean(m, ANN_LEN)).filter(Boolean), contact: clean(d.contact, ANN_CONTACT) };
+  const base = `${STORE}/${docUrl(s.shopId)}/config/`;
+  const [[r1, gm], [r2, cur]] = await Promise.all([get(base + "gamemenu"), get(base + "main")]);
+  if (!r1.ok || !r2.ok) { annMsg[s.shopId] = { bad: "Hindi makuha ang Game Menu o ang settings mula sa cloud. Subukan ulit." }; draw(); return; }
+  const g = fromFs({ mapValue: { fields: gm.fields } }), now = fromFs({ mapValue: { fields: cur.fields } }), at = new Date().toISOString();
+  if (!g.look) { annMsg[s.shopId] = { bad: "Wala pang itsura ng Game Menu sa cloud. I-save muna ang Itsura ng Game Menu sa admin page ng PC." }; draw(); return; }
+  const gdoc = { ...g, version: (g.version || 0) + 1, updatedAt: at, look: { ...g.look, ann } };
+  const mdoc = { ...now, version: now.version + 1, updatedAt: at, updatedBy: "dashboard", gmenu: { version: gdoc.version, by: "dashboard" } };
+  const name = `projects/${PROJECT}/databases/(default)/documents/shops/${s.shopId}/config/`;
+  const writes = [{ update: { name: name + "gamemenu", fields: toFs(gdoc).mapValue.fields }, currentDocument: { updateTime: gm.updateTime } },
+                  { update: { name: name + "main", fields: toFs(mdoc).mapValue.fields }, currentDocument: { updateTime: cur.updateTime } }];
+  const [r] = await post(`${STORE}/projects/${PROJECT}/databases/(default)/documents:commit`, JSON.stringify({ writes }), { "Content-Type": "application/json", Authorization: "Bearer " + idToken });
+  if (!r.ok) { annMsg[s.shopId] = { bad: r.status === 403 ? "Hindi pinayagan ng cloud. Tingnan kung napa-publish na ang bagong Firestore Rules." : "May nagbago habang sine-save. Pindutin ang I-refresh at ulitin." }; delete annCache[s.shopId]; draw(); return; }
+  for (const m of s.members || [s]) {
+    fetch(`${RTDB}/cfgwake/${uid}/${m.shopId}.json?auth=${encodeURIComponent(idToken)}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ at: { ".sv": "timestamp" } }) }).catch(() => {});
+  }
+  annMsg[s.shopId] = { ok: "Naipadala. Lalabas ito sa Game Menu ng mga PC sa loob ng mga 1 hanggang 10 minuto." };
+  annCache[s.shopId] = { doc: gdoc }; delete annDraft[s.shopId]; cfgCache[s.shopId] = { cfg: mdoc, ut: "" };
+  fastUntil = Date.now() + 90000; draw(); clearTimeout(timer); timer = setTimeout(poll, 2500);
 }
 
 // ----- Benta at ulat: sales per day, week, month and year, with a custom range, a comparison, and the reports -----
@@ -1818,7 +1876,7 @@ function salesView() {
   for (const x of d.rows) perDay.set(x.date, mergeList(perDay.get(x.date) || [], x.staff || [], ["c", "g", "l", "f"]));
   const dayBody = el("tbody");
   if (salesStaffDays) for (const [date, list] of [...perDay].sort((a, b) => a[0].localeCompare(b[0]))) list.sort((a, b) => b.c - a.c).forEach((x, i) => dayBody.append(staffLine(x, el("td", {}, i ? "" : rowLabel(date, "day", "day")))));
-  const pcBody = el("tbody"); for (const x of total.pcs.sort((a, b) => a.n.localeCompare(b.n))) pcBody.append(el("tr", {}, el("td", {}, el("b", {}, x.n)), el("td", { class: "num" }, x.s), el("td", { class: "num" }, mins(x.m)), el("td", { class: "num" }, peso(x.c))));
+  const pcBody = el("tbody"); for (const x of total.pcs.sort((a, b) => a.n.localeCompare(b.n, undefined, { numeric: true }))) pcBody.append(el("tr", {}, el("td", {}, el("b", {}, x.n)), el("td", { class: "num" }, x.s), el("td", { class: "num" }, mins(x.m)), el("td", { class: "num" }, peso(x.c))));
   const none = (id) => el("tr", {}, el("td", { colspan: 5, class: "empty" }, "Wala pang datos. Lalabas ito pagkatapos ma-upload ng Hub ang bagong ulat (Settings, Cloud)."));
   if (!total.staff.length) staffBody.append(none()); if (!total.pcs.length) pcBody.append(none());
   const body = el("tbody");
@@ -1888,7 +1946,7 @@ $("#loginForm").addEventListener("submit", async (ev) => {
   catch (e) { $("#loginMsg").textContent = e.message; }
 });
 $("#logout").addEventListener("click", leave);
-$("#refresh").addEventListener("click", () => { lastStamp = ""; accCloud = {}; logCache = {}; cfgCache = {}; cfgDraft = {}; cfgMsg = {}; salesCache = {}; salesState = { key: "", data: null, prev: null, busy: false, error: "", note: "" }; load().catch(() => {}); });
+$("#refresh").addEventListener("click", () => { lastStamp = ""; accCloud = {}; logCache = {}; cfgCache = {}; for (const k in annCache) delete annCache[k]; for (const k in annMsg) delete annMsg[k]; cfgDraft = {}; cfgMsg = {}; salesCache = {}; salesState = { key: "", data: null, prev: null, busy: false, error: "", note: "" }; load().catch(() => {}); });
 (async () => { if (await resume()) { $("#who").textContent = "naka-login"; open(); } else $("#loginBox").classList.remove("hidden"); })();
 </script>
 </body>

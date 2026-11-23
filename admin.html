@@ -52,6 +52,11 @@
   .bar { height:8px; border-radius:99px; background:var(--line); overflow:hidden; margin-top:6px; } .bar i { display:block; height:100%; background:var(--accent); } .bar i.full { background:#b45309; }
   .muted { color:var(--muted); }
   .detail { padding:16px 20px 20px; background:#f0f8f7; border-bottom:1px solid var(--line); display:flex; flex-wrap:wrap; gap:24px; align-items:flex-start; }
+  .kind { font-size:12px; color:var(--muted); margin-top:2px; }
+  span.kind { margin-top:0; }
+  .longnote { font-size:12px; color:#9a6700; margin-top:4px; }
+  .unit.long { background:#fffaf0; }
+  .longchip { display:flex; width:max-content; margin-top:4px; font-size:11.5px; padding:2px 8px; }
   .units { flex:1 1 460px; min-width:0; background:#fff; border:1px solid var(--line); border-radius:10px; overflow:hidden; font-size:13.5px; }
   .unit { display:grid; grid-template-columns:1fr 1.3fr 1.2fr auto; gap:10px; align-items:center; padding:10px 14px; border-bottom:1px solid var(--line); }
   .unit:last-child { border-bottom:0; }
@@ -290,10 +295,29 @@ function shopsOf(k) {
   const ids = Object.keys(k.units || {});
   return shops.filter((s) => ids.includes(s.hubId));
 }
-function lastSeen(k, hubId) {
+// (v0.9.157) a unit is a pisonet Hub ("<hub>") or a client PC of a diskless server ("<hub>:<station>").
+function unitSeen(id) {
+  const [hubId, sid] = id.split(":");
   const s = shops.find((x) => x.hubId === hubId);
-  return s ? s.updatedAt : "";
+  if (!s) return "";
+  if (!sid) return s.updatedAt || "";
+  const pc = (Array.isArray(s.pcs) ? s.pcs : []).find((p) => p && p.id === sid);
+  if (pc && pc.status === "offline") return pc.seen ? pc.seen + (pc.seen.length === 16 ? ":00Z" : "") : "";
+  return pc ? s.updatedAt || "" : "";
 }
+function lastSeen(k, id) { return unitSeen(id); }
+const LONG_DAYS = 30;
+function offDays(id) { const t = Date.parse(unitSeen(id) || ""); return t ? Math.floor((Date.now() - t) / 86400000) : 0; }
+const isLong = (id) => offDays(id) >= LONG_DAYS;
+function kindOf(k) {
+  const ids = Object.keys(k.units || {});
+  if (!ids.length) return null;
+  const servers = new Set(ids.filter((id) => id.includes(":")).map((id) => id.split(":")[0]));
+  if (servers.size) return { type: "diskless", text: `🖥️ Diskless · ${servers.size} server, ${ids.length} client` };
+  return { type: "pisonet", text: `🎮 Pisonet · ${ids.length} PC` };
+}
+const longOf = (k) => Object.keys(k.units || {}).filter(isLong).length;
+const natural = (a, b) => String(a).localeCompare(String(b), undefined, { numeric: true });
 function accountsOf(k) { return Math.max(0, ...shopsOf(k).map((s) => Number((s.today || {}).accounts || 0))); }
 
 const PAGE = 20, RANK = { ok: 1, soon: 2, bad: 3 };
@@ -311,7 +335,9 @@ function ownersOf(list) {
     const first = g.keys[0];
     return { ...g, st: worst, used: g.keys.reduce((n, k) => n + usedOf(k), 0), max: g.keys.reduce((n, k) => n + (k.max || 0), 0), to: g.keys.map((k) => k.to).sort()[0],
       name: first.label || first.ownerEmail || "—", email: first.ownerEmail || "", shop: [...new Set(g.keys.map((k) => k.shop).filter(Boolean))].join(", "),
-      seen, accounts: Math.max(0, ...g.keys.map(accountsOf)) };
+      seen, accounts: Math.max(0, ...g.keys.map(accountsOf)),
+      kinds: [...new Set(g.keys.map((k) => (kindOf(k) || {}).type).filter(Boolean))], kindText: g.keys.map((k) => (kindOf(k) || {}).text).filter(Boolean),
+      long: g.keys.reduce((n, k) => n + longOf(k), 0) };
   }).sort((a, b) => (a.to < b.to ? -1 : 1));
 }
 const matches = (k, q) => !q || [k.id, k.label, k.ownerEmail, k.shop].some((x) => String(x || "").toLowerCase().includes(q));
@@ -322,14 +348,19 @@ function draw() {
   const card = (l, n, s) => el("div", { class: "card" }, el("div", { class: "l" }, l), el("div", { class: "n" }, n), el("div", { class: "s" }, s));
   $("#cards").replaceChildren(card("Mga key", keys.length, `${seats} sa ${max} unit ang gamit · ${groups.unused} key ang hindi pa ginagamit`), card("Active", groups.ok, "gumagamit na at may bisa pa"),
     card("Malapit nang mag-expire", groups.soon, `${WARN_DAYS} araw o mas kaunti na lang`), card("Expired o Suspended", groups.bad, groups.bad ? "kailangang tingnan" : "walang problema"));
-  const tabs = [["all", "Lahat"], ["ok", "Active"], ["soon", "Malapit nang mag-expire"], ["bad", "Expired o Suspended"], ["unused", "Hindi pa ginagamit"]];
+  const allOwners = ownersOf(keys);
+  const extra = { pisonet: allOwners.filter((o) => o.kinds.includes("pisonet")).length, diskless: allOwners.filter((o) => o.kinds.includes("diskless")).length,
+    long: allOwners.filter((o) => o.long).length };
+  const tabs = [["all", "Lahat"], ["ok", "Active"], ["soon", "Malapit nang mag-expire"], ["bad", "Expired o Suspended"], ["unused", "Hindi pa ginagamit"],
+    ["pisonet", "🎮 Pisonet"], ["diskless", "🖥️ Diskless"], ["long", "Matagal nang offline"]];
   $("#chips").replaceChildren(...tabs.map(([f, t]) => {
-    const n = f === "all" ? keys.length : groups[f === "ok" ? "ok" : f];
+    const n = f === "all" ? keys.length : f in extra ? extra[f] : groups[f];
     const b = el("button", { type: "button", "data-f": f, class: filter === f ? "on" : "" }, `${t} (${n})`);
     b.onclick = () => { filter = f; shown = PAGE; draw(); }; return b; }));
   const q = $("#find").value.trim().toLowerCase();
   const rows = [el("div", { class: "row head" }, ...["Owner", "Shop", "Mga key", "Unit (gamit / max)", "Pinakamalapit na expiry", "Kalagayan", "Account ngayon", "Huling nakita"].map((t) => el("div", {}, t)))];
-  const owners = ownersOf(keys).filter((o) => (filter === "all" || o.st.group === filter) && (o.keys.some((k) => matches(k, q))));
+  const pick = (o) => filter === "all" || (filter === "pisonet" || filter === "diskless" ? o.kinds.includes(filter) : filter === "long" ? o.long > 0 : o.st.group === filter);
+  const owners = allOwners.filter((o) => pick(o) && o.keys.some((k) => matches(k, q)));
   const unused = keys.filter((k) => isUnused(k) && matches(k, q));
   if (filter !== "unused") {
     for (const o of owners.slice(0, shown)) {
@@ -337,8 +368,9 @@ function draw() {
       const bar = el("div", { class: "bar" }, el("i", { class: o.used >= o.max ? "full" : "", style: `width:${o.max ? Math.min(100, Math.round(o.used * 100 / o.max)) : 0}%` }));
       const row = el("div", { class: "row" + (open ? " open" : ""), role: "button", tabindex: "0", "aria-expanded": String(open), "data-owner": o.id },
         el("div", {}, el("b", {}, o.name), o.email && o.email !== o.name ? el("div", { class: "muted", style: "font-size:12.5px" }, o.email) : ""),
-        el("div", {}, o.shop || "—"), el("div", {}, o.keys.length === 1 ? "1 key" : o.keys.length + " key"),
-        el("div", {}, el("div", { style: "font-size:13px;font-weight:600" }, `${o.used} / ${o.max}` + (o.used >= o.max ? " · puno na" : "")), bar),
+        el("div", {}, el("div", {}, o.shop || "—"), ...o.kindText.map((t) => el("div", { class: "kind" }, t))), el("div", {}, o.keys.length === 1 ? "1 key" : o.keys.length + " key"),
+        el("div", {}, el("div", { style: "font-size:13px;font-weight:600" }, `${o.used} / ${o.max}` + (o.used >= o.max ? " · puno na" : "")), bar,
+          o.long ? el("div", { class: "longnote" }, `${o.long} matagal nang offline`) : ""),
         el("div", {}, fmtDay(o.to)), el("div", {}, el("span", { class: "chip " + o.st.cls }, el("i"), o.st.text)),
         el("div", {}, String(o.accounts)), el("div", { class: "muted" }, ago(o.seen)));
       const toggle = () => { openOwner = open ? null : o.id; openKey = null; draw(); };
@@ -378,7 +410,8 @@ function ownerDetail(o) {
   o.keys.forEach((k, n) => {
     const st = judge(k);
     wrap.append(el("div", { style: "padding:14px 20px 0;display:flex;flex-wrap:wrap;gap:10px;align-items:center", "data-key": k.id },
-      keyCopy(k.id), el("span", { class: "muted" }, `hanggang ${fmtDay(k.to)} · ${usedOf(k)} / ${k.max} unit`), el("span", { class: "chip " + st.cls }, el("i"), st.text)), detail(k, n));
+      keyCopy(k.id), el("span", { class: "muted" }, `hanggang ${fmtDay(k.to)} · ${usedOf(k)} / ${k.max} unit`), el("span", { class: "chip " + st.cls }, el("i"), st.text),
+      kindOf(k) ? el("span", { class: "kind" }, kindOf(k).text) : ""), detail(k, n));
   });
   const add = el("button", { type: "button", id: "addKeyFor", style: "margin:0 20px 16px" }, "+ Dagdag na key para kay " + o.name);
   add.onclick = () => { $("#kLabel").value = o.name; $("#kLabel").scrollIntoView({ block: "center" }); $("#kLabel").focus(); };
@@ -388,11 +421,13 @@ function ownerDetail(o) {
 function detail(k, n = 0) {
   const sfx = n ? "-" + n : "";
   const units = el("div", { class: "units" });
-  const ids = Object.keys(k.units || {});
+  const ids = Object.keys(k.units || {}).sort((a, b) => natural((k.units[a] || {}).name || a, (k.units[b] || {}).name || b));
   for (const id of ids) {
     const u = k.units[id], rm = el("button", { type: "button", class: "danger" }, "Alisin ang unit");
     rm.onclick = () => removeUnit(k, id);
-    units.append(el("div", { class: "unit" }, el("b", {}, u.name || id), el("span", { class: "muted" }, "Nag-activate: " + fmtDay((u.at || "").slice(0, 10))), el("span", { class: "muted" }, "Huling nakita: " + ago(lastSeen(k, id))), rm));
+    const seen = el("span", { class: "muted" }, "Huling nakita: " + ago(lastSeen(k, id)));
+    if (isLong(id)) seen.append(el("span", { class: "chip warn longchip" }, el("i"), `Matagal nang offline · ${offDays(id)} araw`));
+    units.append(el("div", { class: "unit" + (isLong(id) ? " long" : ""), "data-unit": id }, el("b", {}, u.name || id), el("span", { class: "muted" }, "Nag-activate: " + fmtDay((u.at || "").slice(0, 10))), seen, rm));
   }
   if (!ids.length) units.append(el("div", { class: "unit" }, el("span", { class: "muted" }, "Wala pang unit na gumagamit ng key na ito.")));
   const left = Math.max(0, k.max - ids.length);
