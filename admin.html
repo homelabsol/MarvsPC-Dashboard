@@ -71,6 +71,12 @@
   .meter { background:#f9fafb; border:1px solid var(--line); border-radius:10px; padding:14px 16px; }
   .meter .big { font-size:26px; font-weight:700; } .meter .of { font-size:14px; font-weight:400; color:var(--muted); }
   .meter .bar i.g { background:#16a34a; } .meter .bar i.y { background:#d97706; } .meter .bar i.r { background:#b42318; }
+  .meter .proj { font-size:13px; margin-top:8px; color:var(--muted); } .meter .proj b { color:var(--ink); }
+  .meter.y { border-color:#f5c26b; background:#fffaf0; } .meter.r { border-color:#f3a39b; background:#fff5f4; }
+  #quotaWarn { border-radius:12px; padding:16px 20px; border:1px solid; display:flex; gap:14px; align-items:flex-start; }
+  #quotaWarn[hidden] { display:none; }
+  #quotaWarn.y { background:#fffaf0; border-color:#f5c26b; color:#7a4a00; } #quotaWarn.r { background:#fff5f4; border-color:#f3a39b; color:#8a1c12; }
+  #quotaWarn .t { font-weight:700; font-size:15.5px; } #quotaWarn .d { font-size:13.5px; margin-top:4px; color:var(--ink); }
   .days { display:flex; gap:6px; align-items:flex-end; height:70px; margin-top:12px; }
   .days div { flex:1; height:100%; display:flex; flex-direction:column; justify-content:flex-end; align-items:center; gap:3px; font-size:11px; color:var(--muted); }
   .days i { display:block; width:100%; border-radius:4px 4px 0 0; background:#cbd2da; min-height:2px; } .days i.today { background:var(--accent); }
@@ -100,6 +106,7 @@
       <h1 style="font-size:24px">Mga shop at lisensya</h1>
       <p class="note" style="margin-top:4px">Pindutin ang isang owner para makita ang mga key at computer niya, at ang mga opsyon (suspend, palawigin, dagdag unit).</p>
     </div>
+    <div id="quotaWarn" hidden></div>
     <div class="cards" id="cards"></div>
     <section class="panel" id="usage" style="padding:20px 24px">
       <div class="flex" style="justify-content:space-between;align-items:flex-start">
@@ -509,11 +516,32 @@ function usageNow(now) {                                    // what the Hubs say
   }
   return { day, t, jobs, per: [...per.values()], h24, none, idle, used };
 }
-function useBar(label, value, limit) {
-  const pct = Math.min(100, value / limit * 100), cls = pct >= 90 ? "r" : pct >= 70 ? "y" : "g";
-  return el("div", { class: "meter" }, el("div", { class: "muted" }, label),
+// (v0.9.159, user: "para alam ko kapag 70% dapat lumipat na ako sa Blaze") green below 50%, yellow from 50%, red from 70%.
+const WARN_AT = 50, MOVE_AT = 70;
+const levelOf = (pct) => pct >= MOVE_AT ? "r" : pct >= WARN_AT ? "y" : "g";
+function forecast(value, last24, now) {
+  // The whole day at today's pace (only after 3 hours, the first hours say little), or the last 24 hours, whichever is higher.
+  const hours = (now - pacificStart(now)) / 3600000;
+  const pace = hours >= 3 ? value * 24 / hours : 0;
+  return Math.max(pace, last24, value);
+}
+function useBar(label, value, limit, last24, now) {
+  const pct = Math.min(100, value / limit * 100), fc = forecast(value, last24, now), fpct = fc / limit * 100, lvl = levelOf(fpct);
+  return el("div", { class: "meter " + (lvl === "g" ? "" : lvl), "data-level": lvl }, el("div", { class: "muted" }, label),
     el("div", {}, el("span", { class: "big" }, "mga " + num(value)), el("span", { class: "of" }, ` sa ${num(limit)} · ${pct < 1 && value ? "mas mababa sa 1" : Math.round(pct)}%`)),
-    el("div", { class: "bar" }, el("i", { class: cls, style: `width:${pct}%` })));
+    el("div", { class: "bar" }, el("i", { class: levelOf(pct), style: `width:${pct}%` })),
+    el("div", { class: "proj" }, "Tantiya sa buong araw: ", el("b", {}, `mga ${num(fc)} (${fpct < 1 && fc ? "mas mababa sa 1" : Math.round(fpct)}%)`)));
+}
+function drawQuotaWarn(readsPct, writesPct) {
+  const box = $("#quotaWarn"), top = Math.max(readsPct, writesPct), lvl = levelOf(top), which = readsPct >= writesPct ? "reads" : "writes";
+  if (lvl === "g") { box.hidden = true; box.className = ""; return; }
+  box.hidden = false; box.className = lvl;
+  box.replaceChildren(el("div", { style: "font-size:22px;line-height:1" }, lvl === "r" ? "⛔" : "⚠️"), el("div", {},
+    el("div", { class: "t" }, lvl === "r" ? `Panahon nang lumipat sa Blaze: aabot sa ${Math.round(top)}% ng libreng ${which} ngayong araw`
+                                          : `Bantayan ang Firebase: aabot sa ${Math.round(top)}% ng libreng ${which} ngayong araw`),
+    el("div", { class: "d" }, lvl === "r"
+      ? "Kapag naubos ang libreng quota, hihinto ang cloud hanggang 4 PM (dashboard, account sa cloud ng pisonet). Sa Blaze, tuloy-tuloy at ang lampas lang ang babayaran; walang kailangang baguhin sa program, sa server, sa mga client o sa pisonet."
+      : `Malayo pa sa ${MOVE_AT}%, pero tumataas na. Kapag umabot sa ${MOVE_AT}%, panahon nang lumipat sa Blaze.`)));
 }
 function drawUsage() {
   const link = `https://console.firebase.google.com/project/${PROJECT}/firestore/databases/-default-/usage`, now = Date.now(), u = usageNow(now);
@@ -521,8 +549,9 @@ function drawUsage() {
   $("#useActs").replaceChildren(el("a", { class: "btn", id: "useLink", href: link, target: "_blank", rel: "noopener" }, "Buksan ang Usage sa Firebase"));
   const body = $("#useBody"); body.replaceChildren();
   body.append(el("div", { class: "cards", id: "useBars", style: "grid-template-columns:repeat(2,minmax(0,1fr))" },
-    useBar("Reads ngayong araw (tantiya: mga Hub + dagdag ng Rules)", u.t.r + u.t.x, LIMITS.reads),
-    useBar("Writes ngayong araw (tantiya: mga Hub)", u.t.w, LIMITS.writes)));
+    useBar("Reads ngayong araw (tantiya: mga Hub + dagdag ng Rules)", u.t.r + u.t.x, LIMITS.reads, u.h24.r + u.h24.x, now),
+    useBar("Writes ngayong araw (tantiya: mga Hub)", u.t.w, LIMITS.writes, u.h24.w, now)));
+  drawQuotaWarn(forecast(u.t.r + u.t.x, u.h24.r + u.h24.x, now) / LIMITS.reads * 100, forecast(u.t.w, u.h24.w, now) / LIMITS.writes * 100);
   const cover = [`Ngayong araw sa Pacific time (${u.day}); nagre-reset ng ${resetAtText(pacificStart(now))} sa oras ng Pilipinas.`, `Mula sa ${u.used} Hub.`];
   if (u.none) cover.push(`${u.none} Hub ang wala pang metro (lumang bersyon ng program).`);
   if (u.idle) cover.push(`${u.idle} Hub ang hindi pa nagpapadala ngayong araw.`);
