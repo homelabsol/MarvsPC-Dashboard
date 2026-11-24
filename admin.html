@@ -28,7 +28,30 @@
   .top { background:#fff; border-bottom:1px solid var(--line); padding:14px 28px; display:flex; flex-wrap:wrap; align-items:center; gap:14px; justify-content:space-between; }
   .brand small { display:block; font-size:12px; font-weight:700; letter-spacing:.08em; color:var(--accent); }
   .brand b { font-size:18px; }
-  main { max-width:1280px; margin:0 auto; padding:26px 28px 48px; display:flex; flex-direction:column; gap:22px; }
+  main { max-width:1280px; width:100%; margin:0 auto; padding:26px 28px 48px; display:flex; flex-direction:column; gap:22px; min-width:0; }
+  /* (v0.9.167, user: "ilagay ang ibang features sa left side na tab para hindi magulo, professional looks") */
+  .shell { display:grid; grid-template-columns:260px minmax(0, 1fr); min-height:calc(100vh - 72px); }
+  #side { background:#fff; border-right:1px solid var(--line); padding:18px 12px; position:sticky; top:0; align-self:start; height:calc(100vh - 72px); overflow:auto; }
+  #side .grp { font-size:11px; letter-spacing:.1em; color:var(--muted); font-weight:700; margin:16px 12px 6px; text-transform:uppercase; }
+  #side .grp:first-child { margin-top:4px; }
+  #side a { display:flex; align-items:center; gap:10px; padding:10px 12px; border-radius:9px; color:var(--ink); text-decoration:none; font-weight:600; font-size:14px; white-space:nowrap; }
+  #side a:hover { background:#f3f5f7; }
+  #side a.on { background:#e6f4f2; color:var(--accent); }
+  #side a .n { margin-left:auto; background:var(--badbg); color:var(--bad); border-radius:99px; font-size:11.5px; padding:1px 8px; }
+  #side a .n:empty { display:none; }
+  .page[hidden] { display:none !important; }
+  .todo .trow { display:grid; grid-template-columns:minmax(0,1.3fr) minmax(0,1.2fr) minmax(0,1.3fr) minmax(0,1.5fr) 120px; gap:12px; align-items:center; padding:12px 20px; border-bottom:1px solid var(--line); font-size:14px; }
+  .todo .trow.head { font-size:12px; font-weight:600; color:var(--muted); text-transform:uppercase; letter-spacing:.04em; background:#f9fafb; }
+  .todo .trow:last-child { border-bottom:0; } .todo .trow button { justify-self:end; }
+  .todo .empty { padding:18px 20px; color:var(--muted); }
+  .fire { display:flex; flex-wrap:wrap; gap:18px; align-items:center; justify-content:space-between; padding:16px 20px; }
+  @media (max-width:860px) {
+    .shell { grid-template-columns:1fr; }
+    #side { position:static; height:auto; border-right:0; border-bottom:1px solid var(--line); display:flex; flex-wrap:wrap; gap:4px; padding:10px; }
+    #side .grp { display:none; }
+    #side a { padding:8px 10px; font-size:13px; }
+    .todo .trow { grid-template-columns:1fr 1fr; }
+  }
   h1, h2 { margin:0; }
   .cards { display:grid; grid-template-columns:repeat(4, minmax(0, 1fr)); gap:14px; }
   @media (max-width:760px) { .cards { grid-template-columns:repeat(2, minmax(0, 1fr)); } }
@@ -55,7 +78,7 @@
   .kind { font-size:12px; color:var(--muted); margin-top:2px; }
   span.kind { margin-top:0; }
   .longnote { font-size:12px; color:#9a6700; margin-top:4px; }
-  .unit.long { background:#fffaf0; }
+  .unit.long { background:#fffaf0; } .unit.gone { background:#fff5f4; }
   .longchip { display:flex; width:max-content; margin-top:4px; font-size:11.5px; padding:2px 8px; }
   .units { flex:1 1 460px; min-width:0; background:#fff; border:1px solid var(--line); border-radius:10px; overflow:hidden; font-size:13.5px; }
   .unit { display:grid; grid-template-columns:1fr 1.3fr 1.2fr auto; gap:10px; align-items:center; padding:10px 14px; border-bottom:1px solid var(--line); }
@@ -101,33 +124,51 @@
     <div class="brand"><small>MARVSPC-PISO</small><b>Main admin</b></div>
     <div class="flex" style="align-items:center"><span class="muted" id="who"></span><span class="muted" id="fetched"></span><button id="refresh" type="button">I-refresh</button><button id="logout" type="button">Mag-logout</button></div>
   </header>
+  <div class="shell">
+  <nav id="side" aria-label="Menu">
+    <div class="grp">Pangunahin</div>
+    <a href="#/home" data-page="home">🏠 Pangkalahatan</a>
+    <a href="#/shops" data-page="shops">🏪 Mga shop at lisensya <span class="n" id="navTodo"></span></a>
+    <a href="#/new" data-page="new">➕ Gumawa ng key</a>
+    <div class="grp">Firebase</div>
+    <a href="#/usage" data-page="usage">📈 Paggamit ng Firebase</a>
+    <a href="#/cost" data-page="cost">💰 Gastos at kita (Blaze)</a>
+    <div class="grp">Tulong</div>
+    <a href="#/emg" data-page="emg">🆘 Emergency code</a>
+  </nav>
   <main>
     <div>
-      <h1 style="font-size:24px">Mga shop at lisensya</h1>
-      <p class="note" style="margin-top:4px">Pindutin ang isang owner para makita ang mga key at computer niya, at ang mga opsyon (suspend, palawigin, dagdag unit).</p>
+      <h1 style="font-size:24px" id="pageTitle">Pangkalahatan</h1>
+      <p class="note" style="margin-top:4px" id="pageNote"></p>
     </div>
     <div id="quotaWarn" hidden></div>
-    <div class="cards" id="cards"></div>
-    <section class="panel" id="usage" style="padding:20px 24px">
+    <div class="page" data-page="home" style="display:flex;flex-direction:column;gap:22px">
+      <div class="cards" id="cards"></div>
+      <section class="panel"><div class="fire" id="homeFire"></div></section>
+      <section class="panel todo"><div style="padding:16px 20px 4px"><h2 style="font-size:17px">Kailangan ng aksyon</h2></div><div id="todo"></div></section>
+    </div>
+    <section class="panel page" data-page="usage" id="usage" style="padding:20px 24px">
       <div class="flex" style="justify-content:space-between;align-items:flex-start">
         <div><h2 style="font-size:17px">Paggamit ng Firebase (tantiya)</h2><p class="note" id="useSub" style="margin-top:4px"></p></div>
         <div class="flex" id="useActs"></div>
       </div>
       <div id="useBody" style="margin-top:14px"></div>
     </section>
-    <section class="panel" id="cost" style="padding:20px 24px">
+    <section class="panel page" data-page="cost" id="cost" style="padding:20px 24px">
       <h2 style="font-size:17px">Pagtataya ng gastos at kita (Blaze)</h2>
       <p class="note" id="costSub" style="margin-top:4px">Para malaman kung sapat ang singil kada shop. Gumagamit ng sukat ng mga Hub sa huling 24 oras, at ng mga presyong puwede mong baguhin.</p>
       <div id="costBody" style="margin-top:14px"></div>
     </section>
+    <div class="page" data-page="shops" style="display:flex;flex-direction:column;gap:16px">
     <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:space-between">
       <input id="find" placeholder="Hanapin ang owner, shop o key" aria-label="Hanapin ang owner, shop o key" style="max-width:320px">
       <p class="note" id="msg"></p>
     </div>
     <div class="flex" id="chips"></div>
     <section class="panel"><div class="scroll"><div class="grid" id="table"></div></div></section>
+    </div>
 
-    <section class="panel">
+    <section class="panel page" data-page="new">
       <div class="form">
         <div class="col">
           <div><h2 style="font-size:17px">Gumawa ng license key</h2><p class="note" style="margin-top:4px">Ibibigay mo ang key sa client pagkatapos niyang magbayad.</p></div>
@@ -145,7 +186,7 @@
       </div>
     </section>
 
-    <section class="panel" id="emgPanel" style="padding:20px 24px">
+    <section class="panel page" data-page="emg" id="emgPanel" style="padding:20px 24px">
       <h2 style="font-size:17px">Emergency code</h2>
       <p class="note" style="margin-top:4px">Para sa shop na tumigil dahil sa lisensya (walang internet, sira ang cloud, o may problema ang key). Ibibigay ng owner ang numero na nasa admin page niya; ibigay mo sa kanya ang code. Bubukas ang system nang 3 araw, kahit walang internet. Isang beses lang magagamit ang bawat code.</p>
       <div class="flex" style="margin-top:12px;align-items:flex-end">
@@ -157,6 +198,7 @@
       <p class="note" id="emgOut" style="margin-top:10px"></p>
     </section>
   </main>
+  </div>
 </div>
 
 <script>
@@ -279,6 +321,62 @@ async function load() {
   drawUsage();
   fetchedAt = new Date(); $("#fetched").textContent = "Huling refresh: " + fetchedAt.toLocaleTimeString("fil-PH", { hour: "numeric", minute: "2-digit" });
   draw();
+  drawTodo();
+}
+// ----- (v0.9.167) pages with a menu on the left -----
+const PAGES = {
+  home: ["Pangkalahatan", "Buod ng lahat ng shop, key at Firebase. Pindutin ang menu sa kaliwa para sa detalye."],
+  shops: ["Mga shop at lisensya", "Pindutin ang isang owner para makita ang mga key at computer niya, at ang mga opsyon (suspend, palawigin, dagdag unit)."],
+  new: ["Gumawa ng key", "Gumawa ng license key para sa bagong client o dagdag na key."],
+  usage: ["Paggamit ng Firebase", "Gaano karami ang kinakain ng bawat gawain at bawat shop ngayong araw (libreng quota)."],
+  cost: ["Gastos at kita (Blaze)", "Para malaman kung sapat ang singil kapag lumipat sa Blaze."],
+  emg: ["Emergency code", "Para sa shop na tumigil dahil sa lisensya."],
+};
+function route() {
+  const page = (location.hash.match(/^#\/(\w+)/) || [])[1];
+  const now = PAGES[page] ? page : "home";
+  document.querySelectorAll(".page").forEach((p) => { p.hidden = p.dataset.page !== now; });
+  document.querySelectorAll("#side a").forEach((a) => a.classList.toggle("on", a.dataset.page === now));
+  $("#pageTitle").textContent = PAGES[now][0]; $("#pageNote").textContent = PAGES[now][1];
+}
+addEventListener("hashchange", () => { route(); scrollTo(0, 0); });
+route();
+function drawHomeFire(rNow, wNow, rDay, wDay) {
+  const lvl = (p) => p >= MOVE_AT ? "r" : p >= WARN_AT ? "y" : "g", pct = (p) => p < 1 && p > 0 ? "mas mababa sa 1%" : Math.round(p) + "%";
+  const box = (label, now, day) => el("div", { class: "meter " + (lvl(day) === "g" ? "" : lvl(day)), style: "flex:1 1 260px" },
+    el("div", { class: "muted" }, label), el("div", {}, el("span", { class: "big" }, pct(now)), el("span", { class: "of" }, " ngayong araw")),
+    el("div", { class: "bar" }, el("i", { class: lvl(now), style: `width:${Math.min(100, now)}%` })),
+    el("div", { class: "proj" }, "Tantiya sa buong araw: ", el("b", {}, pct(day))));
+  $("#homeFire").replaceChildren(box("Firebase reads (libreng quota)", rNow, rDay), box("Firebase writes (libreng quota)", wNow, wDay),
+    el("a", { class: "btn", href: "#/usage" }, "Tingnan ang detalye"));
+}
+// "Kailangan ng aksyon": a key near its end, expired or suspended; a unit the server no longer has; a PC off for 30 days.
+function todoItems() {
+  const out = [];
+  for (const o of ownersOf(keys)) {
+    const why = [];
+    let gone = 0;
+    for (const k of o.keys) gone += Object.keys(k.units || {}).filter((id) => unitInfo(id).gone).length;
+    if (o.st.group === "bad" || o.st.group === "soon") why.push(o.st.text);
+    if (gone) why.push(`${gone} unit wala na sa server`);
+    if (o.long) why.push(`${o.long} unit matagal nang offline`);
+    if (why.length) out.push({ o, why: why.join(" · "), rank: o.st.group === "bad" ? 0 : gone ? 1 : 2 });
+  }
+  return out.sort((a, b) => a.rank - b.rank);
+}
+function drawTodo() {
+  const items = todoItems();
+  $("#navTodo").textContent = items.length ? String(items.length) : "";
+  const box = $("#todo");
+  if (!items.length) { box.replaceChildren(el("div", { class: "empty" }, "Walang kailangang gawin ngayon. ✓")); return; }
+  box.replaceChildren(el("div", { class: "trow head" }, el("span", {}, "Owner"), el("span", {}, "Shop"), el("span", {}, "Uri"), el("span", {}, "Bakit"), el("span", {}, "")),
+    ...items.map(({ o, why }) => {
+      const b = el("button", { type: "button", "data-open": o.id }, "Buksan →");
+      b.onclick = () => { openOwner = o.id; openKey = null; filter = "all"; $("#find").value = ""; location.hash = "#/shops"; draw();
+        setTimeout(() => { const r = document.querySelector(".row.open"); if (r) r.scrollIntoView({ block: "center" }); }, 60); };
+      return el("div", { class: "trow", "data-todo": o.id }, el("span", {}, el("b", {}, o.name), o.email && o.email !== o.name ? el("div", { class: "kind" }, o.email) : ""),
+        el("span", {}, o.shop || "—"), el("span", { class: "kind" }, o.kindText.join(", ") || "—"), el("span", {}, why), b);
+    }));
 }
 // (v0.9.150) A key with a Kopyahin button (user: "hindi ko ma-copy, hirap kuhain"); the click does not open or close the row.
 function keyCopy(id) {
@@ -303,15 +401,20 @@ function shopsOf(k) {
   return shops.filter((s) => ids.includes(s.hubId));
 }
 // (v0.9.157) a unit is a pisonet Hub ("<hub>") or a client PC of a diskless server ("<hub>:<station>").
-function unitSeen(id) {
+// (v0.9.166) what the server says about a unit now: its current name (renamed with ✎), when it was last on, and whether the
+// server still has that PC (a client the owner removed, or an old one, is "gone": its seat can be taken back).
+function unitInfo(id) {
   const [hubId, sid] = id.split(":");
   const s = shops.find((x) => x.hubId === hubId);
-  if (!s) return "";
-  if (!sid) return s.updatedAt || "";
-  const pc = (Array.isArray(s.pcs) ? s.pcs : []).find((p) => p && p.id === sid);
-  if (pc && pc.status === "offline") return pc.seen ? pc.seen + (pc.seen.length === 16 ? ":00Z" : "") : "";
-  return pc ? s.updatedAt || "" : "";
+  if (!s) return { seen: "", name: "", gone: false };
+  const pcs = Array.isArray(s.pcs) ? s.pcs : [];
+  if (!sid) return { seen: s.updatedAt || "", name: pcs.length === 1 && pcs[0] ? pcs[0].name || "" : "", gone: false };
+  const pc = pcs.find((p) => p && p.id === sid);
+  if (!pc) return { seen: "", name: "", gone: pcs.some((p) => p && p.id) };          // an old server summary has no ids: say nothing
+  if (pc.status === "offline") return { seen: pc.seen ? pc.seen + (pc.seen.length === 16 ? ":00Z" : "") : "", name: pc.name || "", gone: false };
+  return { seen: s.updatedAt || "", name: pc.name || "", gone: false };
 }
+function unitSeen(id) { return unitInfo(id).seen; }
 function lastSeen(k, id) { return unitSeen(id); }
 const LONG_DAYS = 30;
 function offDays(id) { const t = Date.parse(unitSeen(id) || ""); return t ? Math.floor((Date.now() - t) / 86400000) : 0; }
@@ -428,13 +531,17 @@ function ownerDetail(o) {
 function detail(k, n = 0) {
   const sfx = n ? "-" + n : "";
   const units = el("div", { class: "units" });
-  const ids = Object.keys(k.units || {}).sort((a, b) => natural((k.units[a] || {}).name || a, (k.units[b] || {}).name || b));
+  const shown = (id) => unitInfo(id).name || (k.units[id] || {}).name || id;
+  const ids = Object.keys(k.units || {}).sort((a, b) => (unitInfo(a).gone - unitInfo(b).gone) || natural(shown(a), shown(b)));
   for (const id of ids) {
-    const u = k.units[id], rm = el("button", { type: "button", class: "danger" }, "Alisin ang unit");
+    const u = k.units[id], info = unitInfo(id), rm = el("button", { type: "button", class: "danger" }, "Alisin ang unit");
     rm.onclick = () => removeUnit(k, id);
-    const seen = el("span", { class: "muted" }, "Huling nakita: " + ago(lastSeen(k, id)));
-    if (isLong(id)) seen.append(el("span", { class: "chip warn longchip" }, el("i"), `Matagal nang offline · ${offDays(id)} araw`));
-    units.append(el("div", { class: "unit" + (isLong(id) ? " long" : ""), "data-unit": id }, el("b", {}, u.name || id), el("span", { class: "muted" }, "Nag-activate: " + fmtDay((u.at || "").slice(0, 10))), seen, rm));
+    const seen = el("span", { class: "muted" }, info.gone ? "" : "Huling nakita: " + ago(info.seen));
+    if (info.gone) seen.append(el("span", { class: "chip bad longchip" }, el("i"), "Wala na sa server · puwedeng alisin"));
+    else if (isLong(id)) seen.append(el("span", { class: "chip warn longchip" }, el("i"), `Matagal nang offline · ${offDays(id)} araw`));
+    const was = info.name && u.name && info.name !== u.name ? el("div", { class: "kind" }, "dating " + u.name) : "";
+    units.append(el("div", { class: "unit" + (info.gone ? " gone" : isLong(id) ? " long" : ""), "data-unit": id },
+      el("div", {}, el("b", {}, shown(id)), was), el("span", { class: "muted" }, "Nag-activate: " + fmtDay((u.at || "").slice(0, 10))), seen, rm));
   }
   if (!ids.length) units.append(el("div", { class: "unit" }, el("span", { class: "muted" }, "Wala pang unit na gumagamit ng key na ito.")));
   const left = Math.max(0, k.max - ids.length);
@@ -449,7 +556,7 @@ function detail(k, n = 0) {
   return el("div", { class: "detail" }, el("div", { style: "flex:1 1 460px;min-width:0" }, el("div", { style: "font-size:13px;font-weight:600;margin-bottom:8px" }, "Mga unit" + (k.shop ? " ng " + k.shop : "")), units,
     el("p", { class: "note", style: "margin-top:8px" }, left ? `May ${left} pang bakanteng puwesto. Ang sobra sa ${k.max} ay tatanggihan.` : "Puno na. Ang susunod na unit ay tatanggihan hanggang magdagdag.")),
     el("div", { class: "acts" }, el("div", { class: "inl" }, date, ext), el("div", { class: "inl" }, more, add), sus, ids.length ? "" : del,
-      el("p", { class: "note" }, "Ang pag-suspend ay hihinto sa mga unit pagkatapos nilang suriin ang lisensya (hanggang 6 na oras). Mababalik mo ito anumang oras.")));
+      el("p", { class: "note" }, "Ang pag-suspend ay hihinto sa mga unit pagkatapos nilang suriin ang lisensya (hanggang 1 araw, o agad kapag pinindot ang Suriin ngayon sa shop). Mababalik mo ito anumang oras.")));
 }
 
 // ---- writes (only the fields that change; the rules check the result) ----
@@ -552,6 +659,8 @@ function drawUsage() {
     useBar("Reads ngayong araw (tantiya: mga Hub + dagdag ng Rules)", u.t.r + u.t.x, LIMITS.reads, u.h24.r + u.h24.x, now),
     useBar("Writes ngayong araw (tantiya: mga Hub)", u.t.w, LIMITS.writes, u.h24.w, now)));
   drawQuotaWarn(forecast(u.t.r + u.t.x, u.h24.r + u.h24.x, now) / LIMITS.reads * 100, forecast(u.t.w, u.h24.w, now) / LIMITS.writes * 100);
+  drawHomeFire((u.t.r + u.t.x) / LIMITS.reads * 100, u.t.w / LIMITS.writes * 100,
+               forecast(u.t.r + u.t.x, u.h24.r + u.h24.x, now) / LIMITS.reads * 100, forecast(u.t.w, u.h24.w, now) / LIMITS.writes * 100);
   const cover = [`Ngayong araw sa Pacific time (${u.day}); nagre-reset ng ${resetAtText(pacificStart(now))} sa oras ng Pilipinas.`, `Mula sa ${u.used} Hub.`];
   if (u.none) cover.push(`${u.none} Hub ang wala pang metro (lumang bersyon ng program).`);
   if (u.idle) cover.push(`${u.idle} Hub ang hindi pa nagpapadala ngayong araw.`);
