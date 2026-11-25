@@ -548,13 +548,21 @@ function detail(k, n = 0) {
   ext.onclick = () => patch(k, ["to"], { to: date.value }, "Napalawig hanggang " + fmtDay(date.value));
   const more = el("input", { type: "number", id: "moreUnits" + sfx, min: "1", max: "500", value: "2", "aria-label": "Dagdag na unit" }), add = el("button", { type: "button", id: "addUnits" + sfx }, "Dagdagan ang unit");
   add.onclick = () => patch(k, ["max"], { max: k.max + (parseInt(more.value, 10) || 0) }, "Dinagdagan ang unit");
+  // (v0.9.171, user Nob 26: "alisin ang bakanteng puwesto") take away unused seats; never below the units in use
+  const less = el("input", { type: "number", id: "lessUnits" + sfx, min: "1", max: String(left || 1), value: String(left || 1), "aria-label": "Ilang bakanteng unit ang aalisin" }), cut = el("button", { type: "button", id: "cutUnits" + sfx }, "Bawasan ang unit");
+  cut.onclick = () => {
+    const n = parseInt(less.value, 10) || 0, to = k.max - n;
+    if (n < 1) return say("#msg", "Ilagay kung ilang unit ang aalisin.", "err");
+    if (to < Math.max(1, ids.length)) return say("#msg", `Hindi puwede: ${ids.length} unit ang gamit na. Hanggang ${left} bakanteng puwesto lang ang maaalis.`, "err");
+    patch(k, ["max"], { max: to }, `Binawasan ang unit: ${ids.length} / ${to}`);
+  };
   const sus = el("button", { type: "button", class: k.status === "suspended" ? "main" : "danger", id: "suspend" + sfx }, k.status === "suspended" ? "Ibalik ang lisensya" : "I-suspend ang shop");
   sus.onclick = () => patch(k, ["status"], { status: k.status === "suspended" ? "active" : "suspended" }, k.status === "suspended" ? "Naibalik" : "Na-suspend");
   const del = el("button", { type: "button", class: "danger", id: "deleteKey" + sfx }, "Burahin ang key");
   del.onclick = () => deleteKey(k);
   return el("div", { class: "detail" }, el("div", { style: "flex:1 1 460px;min-width:0" }, el("div", { style: "font-size:13px;font-weight:600;margin-bottom:8px" }, "Mga unit" + (k.shop ? " ng " + k.shop : "")), units,
     el("p", { class: "note", style: "margin-top:8px" }, left ? `May ${left} pang bakanteng puwesto. Ang sobra sa ${k.max} ay tatanggihan.` : "Puno na. Ang susunod na unit ay tatanggihan hanggang magdagdag.")),
-    el("div", { class: "acts" }, el("div", { class: "inl" }, date, ext), el("div", { class: "inl" }, more, add), sus, ids.length ? "" : del,
+    el("div", { class: "acts" }, el("div", { class: "inl" }, date, ext), el("div", { class: "inl" }, more, add), left && k.max - left >= 1 ? el("div", { class: "inl" }, less, cut) : "", sus, ids.length ? "" : del,
       el("p", { class: "note" }, "Ang pag-suspend ay hihinto sa mga unit pagkatapos nilang suriin ang lisensya (hanggang 1 araw, o agad kapag pinindot ang Suriin ngayon sa shop). Mababalik mo ito anumang oras.")));
 }
 
