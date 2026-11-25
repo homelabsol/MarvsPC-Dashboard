@@ -188,12 +188,11 @@
 
     <section class="panel page" data-page="emg" id="emgPanel" style="padding:20px 24px">
       <h2 style="font-size:17px">Emergency code</h2>
-      <p class="note" style="margin-top:4px">Para sa shop na tumigil dahil sa lisensya (walang internet, sira ang cloud, o may problema ang key). Ibibigay ng owner ang numero na nasa admin page niya; ibigay mo sa kanya ang code. Bubukas ang system nang 3 araw, kahit walang internet. Isang beses lang magagamit ang bawat code.</p>
+      <p class="note" style="margin-top:4px">Para sa shop na tumigil dahil sa lisensya (walang internet, sira ang cloud, o may problema ang key). Piliin ang shop at PC, at ilagay ang numero na ibibigay ng owner (nasa admin page niya); ibigay mo sa kanya ang code. Bubukas ang system nang 3 araw, kahit walang internet. Para sa PC na iyon lang, at isang beses lang magagamit ang bawat code.</p>
       <div class="flex" style="margin-top:12px;align-items:flex-end">
-        <label id="emgKeyBox">Emergency key (isang beses lang ilalagay sa browser na ito)<input id="emgKey" type="password" autocomplete="off" style="width:320px"></label>
+        <label>Shop at PC<select id="emgShop" style="width:380px"><option value="">Pumili…</option></select></label>
         <label>Numero mula sa shop<input id="emgReq" inputmode="numeric" maxlength="9" placeholder="1234-5678" style="width:160px"></label>
         <button class="main" type="button" id="emgMake">Gumawa ng emergency code</button>
-        <button type="button" id="emgForget" class="hidden">Palitan ang emergency key</button>
       </div>
       <p class="note" id="emgOut" style="margin-top:10px"></p>
     </section>
@@ -212,7 +211,8 @@ let TEST_API = "", AUTH = "https://identitytoolkit.googleapis.com/v1", TOKEN = "
 const $ = (s) => document.querySelector(s);
 const RT = "marvspc_admin_rt", DOCS = () => `${STORE}/projects/${PROJECT}/databases/(default)/documents`;
 const ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789", WARN_DAYS = 14;
-// ----- (v0.9.148) Emergency code: HMAC-SHA256 of the shop's number with the emergency key (the same as hub/license.py) -----
+// ----- (v0.9.148) Emergency code: HMAC-SHA256 of the shop's number with a key (the same as hub/license.py) -----
+// (v0.9.169) The key is THAT Hub's own secret (emg/<hub>-<fp>, readable by the main admin only); none is in the program.
 async function emergencyCode(keyHex, request) {
   const digits = String(request).replace(/\D/g, "");
   const raw = new Uint8Array(keyHex.match(/../g).map((h) => parseInt(h, 16)));
@@ -222,8 +222,6 @@ async function emergencyCode(keyHex, request) {
   let out = ""; for (let i = 0; i < 8; i++) { out += ALPHABET[n % 31]; n = Math.floor(n / 31); }
   return "EMG-" + out.slice(0, 4) + "-" + out.slice(4);
 }
-function emgKeyNow() { try { return localStorage.getItem("emgKey") || ""; } catch (e) { return ""; } }
-function emgDraw() { const has = !!emgKeyNow(); document.getElementById("emgKeyBox").classList.toggle("hidden", has); document.getElementById("emgForget").classList.toggle("hidden", !has); }
 let idToken = null, uid = null, keys = [], shops = [], fetchedAt = null;
 
 function el(tag, attrs, ...kids) {
@@ -322,6 +320,7 @@ async function load() {
   fetchedAt = new Date(); $("#fetched").textContent = "Huling refresh: " + fetchedAt.toLocaleTimeString("fil-PH", { hour: "numeric", minute: "2-digit" });
   draw();
   drawTodo();
+  emgFill();
 }
 // ----- (v0.9.167) pages with a menu on the left -----
 const PAGES = {
@@ -805,22 +804,33 @@ $("#make").onclick = async () => {
   await load();
 };
 
-// ---- emergency code ----
+// ---- emergency code (v0.9.169: the secret of the chosen Hub, 1 read) ----
+function emgFill() {
+  const sel = $("#emgShop"), was = sel.value;
+  const ownerOf = (hubId) => { const k = keys.find((x) => Object.keys(x.units || {}).some((u) => u.split(":")[0] === hubId)); return k ? k.ownerEmail || k.label || "" : ""; };
+  const rows = shops.filter((s) => s.hubId).map((s) => {
+    const pcs = Array.isArray(s.pcs) ? s.pcs : [];
+    const pc = pcs.length === 1 && pcs[0] ? pcs[0].name || "PC" : `Server (${pcs.length} PC)`;
+    return { id: s.hubId, text: [s.shopName || "—", pc, ownerOf(s.hubId)].filter(Boolean).join(" · ") };
+  }).sort((x, y) => x.text.localeCompare(y.text, "fil", { numeric: true }));
+  sel.replaceChildren(el("option", { value: "" }, "Pumili…"), ...rows.map((r) => el("option", { value: r.id }, r.text)));
+  if (rows.some((r) => r.id === was)) sel.value = was;
+}
 $("#emgMake").onclick = async () => {
-  let key = emgKeyNow();
-  if (!key) {
-    key = $("#emgKey").value.trim().toLowerCase();
-    if (!/^[0-9a-f]{48}$/.test(key)) return say("#emgOut", "Mali ang emergency key (48 na titik at numero).", "err");
-    try { localStorage.setItem("emgKey", key); } catch (e) {}
-    $("#emgKey").value = ""; emgDraw();
-  }
+  const hubId = $("#emgShop").value;
+  if (!hubId) return say("#emgOut", "Piliin muna ang shop at PC.", "err");
   const req = $("#emgReq").value.replace(/\D/g, "");
   if (req.length !== 8) return say("#emgOut", "Ilagay ang 8 numero na nasa admin page ng shop (hal. 1234-5678).", "err");
-  const code = await emergencyCode(key, req);
+  say("#emgOut", "Kinukuha…");
+  const q = { structuredQuery: { from: [{ collectionId: "emg" }], where: { fieldFilter: { field: { fieldPath: "hub" }, op: "EQUAL", value: { stringValue: hubId } } } } };
+  const [r, d] = await post(`${DOCS()}:runQuery`, JSON.stringify(q), authed());
+  if (!r.ok) return say("#emgOut", "Hindi mabasa sa cloud. I-publish ang bagong Firestore Rules, tapos subukan ulit.", "err");
+  const docs = (d || []).filter((x) => x.document).map((x) => Object.fromEntries(Object.entries(x.document.fields || {}).map(([k, v]) => [k, fromFs(v)])))
+    .filter((x) => /^[0-9a-f]{48}$/.test(x.s || "")).sort((x, y) => String(y.at).localeCompare(String(x.at)));
+  if (!docs.length) return say("#emgOut", "Wala pang emergency secret ang PC na ito sa cloud. Kailangang naka-update ito (v0.9.169 pataas) at nakakonekta sa internet kahit isang beses.", "err");
+  const code = await emergencyCode(docs[0].s, req);
   say("#emgOut", `Emergency code para sa ${req.slice(0, 4)}-${req.slice(4)}: ${code}`, "good");
 };
-$("#emgForget").onclick = () => { try { localStorage.removeItem("emgKey"); } catch (e) {} emgDraw(); };
-emgDraw();
 
 // ---- start ----
 $("#find").oninput = draw;

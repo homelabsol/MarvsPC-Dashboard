@@ -386,7 +386,7 @@ async function load() {
 }
 
 // ---- drawing ----
-const STATUS = { vacant: "Bakante", in_use: "Naglalaro", parked: "Naka-park", maintenance: "Maintenance", offline: "Offline" };
+const STATUS = { vacant: "Bakante", in_use: "Naglalaro", parked: "Naka-park", maintenance: "Maintenance", offline: "Offline", pending: "Naghihintay (bago)" };
 function pcKey(pc) { return pc.status === "in_use" && pc.parked ? "parked" : pc.status; }
 // The Hub sends a tiny "I am alive" signal every 30 seconds (Realtime Database, free and not counted like Firestore).
 // A Hub is gone when the signal is older than ~100 seconds. The clocks of the Hub and of this device may disagree:
